@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 import swisseph as swe
 import pytz
 from timezonefinder import TimezoneFinder
-
+import json
 app = FastAPI(title="Uranus Transits API", version="4.0")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True,
@@ -41,7 +41,163 @@ else:
     swe.set_ephe_path(None)
 
 tf = TimezoneFinder()
+# ============================================================
+# CARGAR INTERPRETACIONES (biblioteca de 367 textos)
+# ============================================================
+_interpretaciones_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'data', 'interpretaciones_completas.json')
+INTERPRETACIONES = {}
+try:
+    with open(_interpretaciones_path, 'r', encoding='utf-8') as f:
+        INTERPRETACIONES = json.load(f)
+    print(f"✓ {len(INTERPRETACIONES)} interpretaciones cargadas desde {_interpretaciones_path}")
+except FileNotFoundError:
+    print(f"⚠ Archivo de interpretaciones no encontrado: {_interpretaciones_path}")
+except Exception as e:
+    print(f"⚠ Error cargando interpretaciones: {e}")
 
+# Mapas de normalización
+PLANET_KEY_MAP = {
+    'sun': 'sol', 'sol': 'sol',
+    'moon': 'luna', 'luna': 'luna',
+    'mercury': 'mercurio', 'mercurio': 'mercurio',
+    'venus': 'venus',
+    'mars': 'marte', 'marte': 'marte',
+    'jupiter': 'jupiter', 'júpiter': 'jupiter',
+    'saturn': 'saturno', 'saturno': 'saturno',
+    'uranus': 'urano', 'urano': 'urano',
+    'neptune': 'neptuno', 'neptuno': 'neptuno',
+    'pluto': 'pluton', 'plutón': 'pluton', 'pluton': 'pluton',
+    'chiron': 'quiron', 'quirón': 'quiron', 'quiron': 'quiron'
+}
+
+SIGN_KEY_MAP = {
+    'aries': 'aries',
+    'taurus': 'tauro', 'tauro': 'tauro',
+    'gemini': 'geminis', 'géminis': 'geminis', 'geminis': 'geminis',
+    'cancer': 'cancer', 'cáncer': 'cancer',
+    'leo': 'leo',
+    'virgo': 'virgo',
+    'libra': 'libra',
+    'scorpio': 'escorpio', 'escorpio': 'escorpio',
+    'sagittarius': 'sagitario', 'sagitario': 'sagitario',
+    'capricorn': 'capricornio', 'capricornio': 'capricornio',
+    'aquarius': 'acuario', 'acuario': 'acuario',
+    'pisces': 'piscis', 'piscis': 'piscis'
+}
+
+ORDEN_PLANETAS = ['sol', 'luna', 'mercurio', 'venus', 'marte', 'jupiter', 'saturno', 'urano', 'neptuno', 'pluton', 'quiron']
+
+SIGNOS_OPUESTOS = {
+    'aries': 'libra', 'tauro': 'escorpio', 'geminis': 'sagitario',
+    'cancer': 'capricornio', 'leo': 'acuario', 'virgo': 'piscis',
+    'libra': 'aries', 'escorpio': 'tauro', 'sagitario': 'geminis',
+    'capricornio': 'cancer', 'acuario': 'leo', 'piscis': 'virgo'
+}
+
+def normalizar_planeta(p):
+    return PLANET_KEY_MAP.get(str(p).lower().strip(), None)
+
+def normalizar_signo(s):
+    return SIGN_KEY_MAP.get(str(s).lower().strip(), None)
+
+def obtener_interpretaciones_carta(natal_chart_data):
+    """
+    Recibe el resultado de /calculate (campo 'natal_chart') y devuelve
+    un diccionario con todas las interpretaciones aplicables.
+    """
+    resultado = {}
+    
+    # Planetas en signos y casas
+    planetas = natal_chart_data.get('planets', {})
+    for planeta_en, datos in planetas.items():
+        p = normalizar_planeta(planeta_en)
+        if not p:
+            continue
+        signo = normalizar_signo(datos.get('sign'))
+        casa = datos.get('house')
+        
+        if signo:
+            clave_signo = f"{p}_{signo}"
+            if clave_signo in INTERPRETACIONES:
+                resultado[clave_signo] = {
+                    'tipo': 'planeta_en_signo',
+                    'planeta': p,
+                    'signo': signo,
+                    'texto': INTERPRETACIONES[clave_signo]
+                }
+        
+        if casa and 1 <= casa <= 12:
+            clave_casa = f"{p}_casa_{casa}"
+            if clave_casa in INTERPRETACIONES:
+                resultado[clave_casa] = {
+                    'tipo': 'planeta_en_casa',
+                    'planeta': p,
+                    'casa': casa,
+                    'texto': INTERPRETACIONES[clave_casa]
+                }
+    
+    # Quirón (está en 'extras')
+    extras = natal_chart_data.get('extras', {})
+    if 'chiron' in extras:
+        signo = normalizar_signo(extras['chiron'].get('sign'))
+        casa = extras['chiron'].get('house')
+        if signo:
+            clave = f"quiron_{signo}"
+            if clave in INTERPRETACIONES:
+                resultado[clave] = {'tipo': 'planeta_en_signo', 'planeta': 'quiron', 'signo': signo, 'texto': INTERPRETACIONES[clave]}
+        if casa and 1 <= casa <= 12:
+            clave = f"quiron_casa_{casa}"
+            if clave in INTERPRETACIONES:
+                resultado[clave] = {'tipo': 'planeta_en_casa', 'planeta': 'quiron', 'casa': casa, 'texto': INTERPRETACIONES[clave]}
+    
+    # Nodos lunares (Norte verdadero = 'true_node')
+    if 'true_node' in extras:
+        signo_norte = normalizar_signo(extras['true_node'].get('sign'))
+        if signo_norte:
+            clave = f"nodo_norte_{signo_norte}"
+            if clave in INTERPRETACIONES:
+                resultado[clave] = {'tipo': 'nodo_norte', 'signo': signo_norte, 'texto': INTERPRETACIONES[clave]}
+            # Nodo sur = opuesto automático
+            signo_sur = SIGNOS_OPUESTOS.get(signo_norte)
+            if signo_sur:
+                clave_sur = f"nodo_sur_{signo_sur}"
+                if clave_sur in INTERPRETACIONES:
+                    resultado[clave_sur] = {'tipo': 'nodo_sur', 'signo': signo_sur, 'texto': INTERPRETACIONES[clave_sur]}
+    
+    # Parte de la Fortuna
+    if 'fortuna' in extras:
+        signo = normalizar_signo(extras['fortuna'].get('sign'))
+        casa = extras['fortuna'].get('house')
+        if signo:
+            clave = f"fortuna_{signo}"
+            if clave in INTERPRETACIONES:
+                resultado[clave] = {'tipo': 'fortuna_signo', 'signo': signo, 'texto': INTERPRETACIONES[clave]}
+        if casa and 1 <= casa <= 12:
+            clave = f"fortuna_casa_{casa}"
+            if clave in INTERPRETACIONES:
+                resultado[clave] = {'tipo': 'fortuna_casa', 'casa': casa, 'texto': INTERPRETACIONES[clave]}
+    
+    # Aspectos natales
+    aspectos = natal_chart_data.get('aspects', [])
+    for asp in aspectos:
+        p1 = normalizar_planeta(asp.get('planet1'))
+        p2 = normalizar_planeta(asp.get('planet2'))
+        if not p1 or not p2 or p1 == p2:
+            continue
+        # Ordenar según el orden establecido
+        if ORDEN_PLANETAS.index(p1) > ORDEN_PLANETAS.index(p2):
+            p1, p2 = p2, p1
+        clave = f"aspectos_{p1}_{p2}"
+        if clave in INTERPRETACIONES and clave not in resultado:
+            resultado[clave] = {
+                'tipo': 'aspecto',
+                'planeta1': p1,
+                'planeta2': p2,
+                'aspecto': asp.get('aspect', {}).get('name_es'),
+                'texto': INTERPRETACIONES[clave]
+            }
+    
+    return resultado
 # ============================================================
 # CONSTANTS
 # ============================================================
@@ -736,7 +892,49 @@ def calculate_chart(birth: BirthData):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Calculation error: {str(e)}")
 
+# ============================================================
+# ENDPOINTS DE INTERPRETACIONES
+# ============================================================
+@app.get("/interpretation/{clave}")
+def get_interpretation(clave: str):
+    """Obtener una interpretación por clave (ej: sol_libra, luna_casa_7, aspectos_sol_luna)"""
+    if clave not in INTERPRETACIONES:
+        raise HTTPException(status_code=404, detail=f"Interpretación no encontrada: {clave}")
+    return {"clave": clave, "texto": INTERPRETACIONES[clave]}
 
+
+@app.get("/interpretations/info")
+def interpretations_info():
+    """Estadísticas de la biblioteca interpretativa"""
+    claves = list(INTERPRETACIONES.keys())
+    import re
+    return {
+        "total": len(claves),
+        "planetas_en_casas": len([k for k in claves if re.search(r'_casa_\d+$', k)]),
+        "planetas_en_signos": len([k for k in claves if re.match(r'^(sol|luna|mercurio|venus|marte|jupiter|saturno|urano|neptuno|pluton|quiron)_(aries|tauro|geminis|cancer|leo|virgo|libra|escorpio|sagitario|capricornio|acuario|piscis)$', k)]),
+        "nodos": len([k for k in claves if k.startswith('nodo_')]),
+        "fortuna": len([k for k in claves if k.startswith('fortuna_')]),
+        "aspectos": len([k for k in claves if k.startswith('aspectos_')])
+    }
+
+
+@app.post("/interpret-chart")
+def interpret_chart(birth: BirthData):
+    """
+    Recibe los datos de nacimiento, calcula la carta natal y devuelve
+    TODAS las interpretaciones aplicables en una sola respuesta.
+    """
+    chart_data = calculate_chart(birth)
+    interpretaciones = obtener_interpretaciones_carta(chart_data['natal_chart'])
+    
+    return {
+        "birth_data": chart_data['birth_data'],
+        "natal_chart": chart_data['natal_chart'],
+        "interpretaciones": {
+            "total": len(interpretaciones),
+            "textos": interpretaciones
+        }
+    }
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8765)
