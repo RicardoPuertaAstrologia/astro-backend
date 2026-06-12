@@ -107,6 +107,19 @@ def obtener_interpretaciones_carta(natal_chart_data):
     """
     resultado = {}
     
+    # Ascendente en signo (va PRIMERO para que aparezca antes de los planetas)
+    asc_data = natal_chart_data.get('asc', {})
+    if asc_data:
+        signo_asc = normalizar_signo(asc_data.get('sign'))
+        if signo_asc:
+            clave_asc = f"ascendente_{signo_asc}"
+            if clave_asc in INTERPRETACIONES:
+                resultado[clave_asc] = {
+                    'tipo': 'ascendente',
+                    'signo': signo_asc,
+                    'texto': INTERPRETACIONES[clave_asc]
+                }
+    
     # Planetas en signos y casas
     planetas = natal_chart_data.get('planets', {})
     for planeta_en, datos in planetas.items():
