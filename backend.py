@@ -42,19 +42,58 @@ else:
 
 tf = TimezoneFinder()
 # ============================================================
-# CARGAR INTERPRETACIONES (biblioteca de 367 textos)
+# CARGAR INTERPRETACIONES (biblioteca bilingüe — 403 textos por idioma)
 # ============================================================
-_interpretaciones_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'data', 'interpretaciones_completas.json')
-INTERPRETACIONES = {}
-try:
-    with open(_interpretaciones_path, 'r', encoding='utf-8') as f:
-        INTERPRETACIONES = json.load(f)
-    print(f"✓ {len(INTERPRETACIONES)} interpretaciones cargadas desde {_interpretaciones_path}")
-except FileNotFoundError:
-    print(f"⚠ Archivo de interpretaciones no encontrado: {_interpretaciones_path}")
-except Exception as e:
-    print(f"⚠ Error cargando interpretaciones: {e}")
+_data_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'data')
 
+IDIOMAS_DISPONIBLES = ['es', 'en']
+IDIOMA_POR_DEFECTO = 'es'
+
+_ARCHIVOS_INTERPRETACIONES = {
+    'es': 'interpretaciones_completas_ES.json',
+    'en': 'interpretaciones_completas_EN.json',
+}
+
+def _cargar_biblioteca(lang, filename):
+    path = _os.path.join(_data_dir, filename)
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        print(f"✓ [{lang}] {len(data)} interpretaciones cargadas desde {path}")
+        return data
+    except FileNotFoundError:
+        print(f"⚠ [{lang}] Archivo no encontrado: {path}")
+    except Exception as e:
+        print(f"⚠ [{lang}] Error cargando interpretaciones: {e}")
+    return {}
+
+INTERPRETACIONES_POR_IDIOMA = {
+    lang: _cargar_biblioteca(lang, fname)
+    for lang, fname in _ARCHIVOS_INTERPRETACIONES.items()
+}
+
+# Compatibilidad hacia atrás: el nombre antiguo apunta al español
+INTERPRETACIONES = INTERPRETACIONES_POR_IDIOMA.get(IDIOMA_POR_DEFECTO, {})
+
+
+def normalizar_idioma(lang):
+    l = (lang or IDIOMA_POR_DEFECTO).lower().strip()[:2]
+    return l if l in IDIOMAS_DISPONIBLES else IDIOMA_POR_DEFECTO
+
+
+def obtener_texto(clave, lang):
+    """Devuelve (texto, idioma_real). Si falta la clave en el idioma pedido,
+    cae al español. Si tampoco existe allí, devuelve (None, lang)."""
+    lang = normalizar_idioma(lang)
+    texto = INTERPRETACIONES_POR_IDIOMA.get(lang, {}).get(clave)
+    if texto is not None:
+        return texto, lang
+    if lang != IDIOMA_POR_DEFECTO:
+        texto = INTERPRETACIONES_POR_IDIOMA.get(IDIOMA_POR_DEFECTO, {}).get(clave)
+        if texto is not None:
+            return texto, IDIOMA_POR_DEFECTO
+    return None, lang
+    
 # Mapas de normalización
 PLANET_KEY_MAP = {
     'sun': 'sol', 'sol': 'sol',
@@ -100,116 +139,95 @@ def normalizar_planeta(p):
 def normalizar_signo(s):
     return SIGN_KEY_MAP.get(str(s).lower().strip(), None)
 
-def obtener_interpretaciones_carta(natal_chart_data):
+def obtener_interpretaciones_carta(natal_chart_data, lang=IDIOMA_POR_DEFECTO):
     """
     Recibe el resultado de /calculate (campo 'natal_chart') y devuelve
-    un diccionario con todas las interpretaciones aplicables.
+    todas las interpretaciones aplicables en el idioma pedido.
     """
+    lang = normalizar_idioma(lang)
     resultado = {}
-    
-    # Ascendente en signo (va PRIMERO para que aparezca antes de los planetas)
+
+    def agregar(clave, meta):
+        if clave in resultado:
+            return
+        texto, idioma_real = obtener_texto(clave, lang)
+        if texto is None:
+            return
+        meta['texto'] = texto
+        meta['idioma'] = idioma_real
+        resultado[clave] = meta
+
+    # Ascendente en signo (primero, para que anteceda a los planetas)
     asc_data = natal_chart_data.get('asc', {})
     if asc_data:
         signo_asc = normalizar_signo(asc_data.get('sign'))
         if signo_asc:
-            clave_asc = f"ascendente_{signo_asc}"
-            if clave_asc in INTERPRETACIONES:
-                resultado[clave_asc] = {
-                    'tipo': 'ascendente',
-                    'signo': signo_asc,
-                    'texto': INTERPRETACIONES[clave_asc]
-                }
-    
+            agregar(f"ascendente_{signo_asc}", {'tipo': 'ascendente', 'signo': signo_asc})
+
     # Planetas en signos y casas
-    planetas = natal_chart_data.get('planets', {})
-    for planeta_en, datos in planetas.items():
+    for planeta_en, datos in natal_chart_data.get('planets', {}).items():
         p = normalizar_planeta(planeta_en)
         if not p:
             continue
         signo = normalizar_signo(datos.get('sign'))
         casa = datos.get('house')
-        
         if signo:
-            clave_signo = f"{p}_{signo}"
-            if clave_signo in INTERPRETACIONES:
-                resultado[clave_signo] = {
-                    'tipo': 'planeta_en_signo',
-                    'planeta': p,
-                    'signo': signo,
-                    'texto': INTERPRETACIONES[clave_signo]
-                }
-        
+            agregar(f"{p}_{signo}", {'tipo': 'planeta_en_signo', 'planeta': p, 'signo': signo})
         if casa and 1 <= casa <= 12:
-            clave_casa = f"{p}_casa_{casa}"
-            if clave_casa in INTERPRETACIONES:
-                resultado[clave_casa] = {
-                    'tipo': 'planeta_en_casa',
-                    'planeta': p,
-                    'casa': casa,
-                    'texto': INTERPRETACIONES[clave_casa]
-                }
-    
-    # Quirón (está en 'extras')
+            agregar(f"{p}_casa_{casa}", {'tipo': 'planeta_en_casa', 'planeta': p, 'casa': casa})
+
     extras = natal_chart_data.get('extras', {})
+
+    # Quirón
     if 'chiron' in extras:
         signo = normalizar_signo(extras['chiron'].get('sign'))
         casa = extras['chiron'].get('house')
         if signo:
-            clave = f"quiron_{signo}"
-            if clave in INTERPRETACIONES:
-                resultado[clave] = {'tipo': 'planeta_en_signo', 'planeta': 'quiron', 'signo': signo, 'texto': INTERPRETACIONES[clave]}
+            agregar(f"quiron_{signo}", {'tipo': 'planeta_en_signo', 'planeta': 'quiron', 'signo': signo})
         if casa and 1 <= casa <= 12:
-            clave = f"quiron_casa_{casa}"
-            if clave in INTERPRETACIONES:
-                resultado[clave] = {'tipo': 'planeta_en_casa', 'planeta': 'quiron', 'casa': casa, 'texto': INTERPRETACIONES[clave]}
-    
-    # Nodos lunares (Norte verdadero = 'true_node')
+            agregar(f"quiron_casa_{casa}", {'tipo': 'planeta_en_casa', 'planeta': 'quiron', 'casa': casa})
+
+    # Nodos lunares en signos (Sur = opuesto automático del Norte)
     if 'true_node' in extras:
         signo_norte = normalizar_signo(extras['true_node'].get('sign'))
         if signo_norte:
-            clave = f"nodo_norte_{signo_norte}"
-            if clave in INTERPRETACIONES:
-                resultado[clave] = {'tipo': 'nodo_norte', 'signo': signo_norte, 'texto': INTERPRETACIONES[clave]}
-            # Nodo sur = opuesto automático
+            agregar(f"nodo_norte_{signo_norte}", {'tipo': 'nodo_norte', 'signo': signo_norte})
             signo_sur = SIGNOS_OPUESTOS.get(signo_norte)
             if signo_sur:
-                clave_sur = f"nodo_sur_{signo_sur}"
-                if clave_sur in INTERPRETACIONES:
-                    resultado[clave_sur] = {'tipo': 'nodo_sur', 'signo': signo_sur, 'texto': INTERPRETACIONES[clave_sur]}
-    
+                agregar(f"nodo_sur_{signo_sur}", {'tipo': 'nodo_sur', 'signo': signo_sur})
+        # Nodo Norte en casa (material nuevo — fase 11)
+        casa_norte = extras['true_node'].get('house')
+        if casa_norte and 1 <= casa_norte <= 12:
+            agregar(f"nodo_norte_casa_{casa_norte}", {'tipo': 'nodo_norte_casa', 'casa': casa_norte})
+
+    # Nodo Sur en casa (material nuevo — fase 11)
+    if 'south_node' in extras:
+        casa_sur = extras['south_node'].get('house')
+        if casa_sur and 1 <= casa_sur <= 12:
+            agregar(f"nodo_sur_casa_{casa_sur}", {'tipo': 'nodo_sur_casa', 'casa': casa_sur})
+
     # Parte de la Fortuna
     if 'fortuna' in extras:
         signo = normalizar_signo(extras['fortuna'].get('sign'))
         casa = extras['fortuna'].get('house')
         if signo:
-            clave = f"fortuna_{signo}"
-            if clave in INTERPRETACIONES:
-                resultado[clave] = {'tipo': 'fortuna_signo', 'signo': signo, 'texto': INTERPRETACIONES[clave]}
+            agregar(f"fortuna_{signo}", {'tipo': 'fortuna_signo', 'signo': signo})
         if casa and 1 <= casa <= 12:
-            clave = f"fortuna_casa_{casa}"
-            if clave in INTERPRETACIONES:
-                resultado[clave] = {'tipo': 'fortuna_casa', 'casa': casa, 'texto': INTERPRETACIONES[clave]}
-    
+            agregar(f"fortuna_casa_{casa}", {'tipo': 'fortuna_casa', 'casa': casa})
+
     # Aspectos natales
-    aspectos = natal_chart_data.get('aspects', [])
-    for asp in aspectos:
+    for asp in natal_chart_data.get('aspects', []):
         p1 = normalizar_planeta(asp.get('planet1'))
         p2 = normalizar_planeta(asp.get('planet2'))
         if not p1 or not p2 or p1 == p2:
             continue
-        # Ordenar según el orden establecido
         if ORDEN_PLANETAS.index(p1) > ORDEN_PLANETAS.index(p2):
             p1, p2 = p2, p1
-        clave = f"aspectos_{p1}_{p2}"
-        if clave in INTERPRETACIONES and clave not in resultado:
-            resultado[clave] = {
-                'tipo': 'aspecto',
-                'planeta1': p1,
-                'planeta2': p2,
-                'aspecto': asp.get('aspect', {}).get('name_es'),
-                'texto': INTERPRETACIONES[clave]
-            }
-    
+        nombre_asp = asp.get('aspect', {}).get('name_en' if lang == 'en' else 'name_es')
+        agregar(f"aspectos_{p1}_{p2}", {
+            'tipo': 'aspecto', 'planeta1': p1, 'planeta2': p2, 'aspecto': nombre_asp
+        })
+
     return resultado
 # ============================================================
 # CONSTANTS
@@ -909,46 +927,53 @@ def calculate_chart(birth: BirthData):
 # ENDPOINTS DE INTERPRETACIONES
 # ============================================================
 @app.get("/interpretation/{clave}")
-def get_interpretation(clave: str):
-    """Obtener una interpretación por clave (ej: sol_libra, luna_casa_7, aspectos_sol_luna)"""
-    if clave not in INTERPRETACIONES:
+def get_interpretation(clave: str, lang: str = IDIOMA_POR_DEFECTO):
+    """Obtener una interpretación por clave (ej: sol_libra, luna_casa_7, aspectos_sol_luna).
+    Parámetro opcional ?lang=es|en"""
+    texto, idioma_real = obtener_texto(clave, lang)
+    if texto is None:
         raise HTTPException(status_code=404, detail=f"Interpretación no encontrada: {clave}")
-    return {"clave": clave, "texto": INTERPRETACIONES[clave]}
+    return {"clave": clave, "idioma": idioma_real, "texto": texto}
 
 
 @app.get("/interpretations/info")
-def interpretations_info():
-    """Estadísticas de la biblioteca interpretativa"""
-    claves = list(INTERPRETACIONES.keys())
+def interpretations_info(lang: str = IDIOMA_POR_DEFECTO):
+    """Estadísticas de la biblioteca interpretativa. Parámetro opcional ?lang=es|en"""
     import re
+    lang = normalizar_idioma(lang)
+    claves = list(INTERPRETACIONES_POR_IDIOMA.get(lang, {}).keys())
     return {
+        "idioma": lang,
+        "idiomas_disponibles": IDIOMAS_DISPONIBLES,
+        "conteo_por_idioma": {k: len(v) for k, v in INTERPRETACIONES_POR_IDIOMA.items()},
         "total": len(claves),
-        "planetas_en_casas": len([k for k in claves if re.search(r'_casa_\d+$', k)]),
+        "planetas_en_casas": len([k for k in claves if re.search(r'^(sol|luna|mercurio|venus|marte|jupiter|saturno|urano|neptuno|pluton|quiron)_casa_\d+$', k)]),
         "planetas_en_signos": len([k for k in claves if re.match(r'^(sol|luna|mercurio|venus|marte|jupiter|saturno|urano|neptuno|pluton|quiron)_(aries|tauro|geminis|cancer|leo|virgo|libra|escorpio|sagitario|capricornio|acuario|piscis)$', k)]),
-        "nodos": len([k for k in claves if k.startswith('nodo_')]),
+        "ascendentes": len([k for k in claves if k.startswith('ascendente_')]),
+        "nodos_signos": len([k for k in claves if re.match(r'^nodo_(norte|sur)_(?!casa_)', k)]),
+        "nodos_casas": len([k for k in claves if re.match(r'^nodo_(norte|sur)_casa_\d+$', k)]),
         "fortuna": len([k for k in claves if k.startswith('fortuna_')]),
         "aspectos": len([k for k in claves if k.startswith('aspectos_')])
     }
 
 
 @app.post("/interpret-chart")
-def interpret_chart(birth: BirthData):
-    """
-    Recibe los datos de nacimiento, calcula la carta natal y devuelve
-    TODAS las interpretaciones aplicables en una sola respuesta.
-    """
+def interpret_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO):
+    """Calcula la carta natal y devuelve todas las interpretaciones aplicables.
+    Parámetro opcional ?lang=es|en"""
     chart_data = calculate_chart(birth)
-    interpretaciones = obtener_interpretaciones_carta(chart_data['natal_chart'])
-    
+    lang = normalizar_idioma(lang)
+    interpretaciones = obtener_interpretaciones_carta(chart_data['natal_chart'], lang)
+
     return {
         "birth_data": chart_data['birth_data'],
         "natal_chart": chart_data['natal_chart'],
+        "idioma": lang,
         "interpretaciones": {
             "total": len(interpretaciones),
             "textos": interpretaciones
         }
     }
-
 
 if __name__ == "__main__":
     import uvicorn
