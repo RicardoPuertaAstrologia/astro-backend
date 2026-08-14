@@ -190,15 +190,26 @@ def obtener_interpretaciones_carta(natal_chart_data, lang=IDIOMA_POR_DEFECTO):
     # Nodos lunares en signos (Sur = opuesto automático del Norte)
     if 'true_node' in extras:
         signo_norte = normalizar_signo(extras['true_node'].get('sign'))
+        casa_norte = extras['true_node'].get('house')
         if signo_norte:
             agregar(f"nodo_norte_{signo_norte}", {'tipo': 'nodo_norte', 'signo': signo_norte})
             signo_sur = SIGNOS_OPUESTOS.get(signo_norte)
             if signo_sur:
                 agregar(f"nodo_sur_{signo_sur}", {'tipo': 'nodo_sur', 'signo': signo_sur})
-        # Nodo Norte en casa (material nuevo — fase 11)
-        casa_norte = extras['true_node'].get('house')
+        # Nodo Norte en casa
         if casa_norte and 1 <= casa_norte <= 12:
             agregar(f"nodo_norte_casa_{casa_norte}", {'tipo': 'nodo_norte_casa', 'casa': casa_norte})
+        # PUENTE DE SÍNTESIS: cruza el signo del Nodo Norte con la casa donde cae.
+        # Un solo puente cubre todo el eje, porque el Nodo Sur queda determinado.
+        if signo_norte and casa_norte and 1 <= casa_norte <= 12:
+            casa_sur_eje = casa_norte + 6 if casa_norte <= 6 else casa_norte - 6
+            agregar(f"puente_nn_{signo_norte}_casa_{casa_norte}", {
+                'tipo': 'puente_nodal',
+                'signo_norte': signo_norte,
+                'casa_norte': casa_norte,
+                'signo_sur': SIGNOS_OPUESTOS.get(signo_norte),
+                'casa_sur': casa_sur_eje
+            })
 
     # Nodo Sur en casa (material nuevo — fase 11)
     if 'south_node' in extras:
@@ -952,6 +963,7 @@ def interpretations_info(lang: str = IDIOMA_POR_DEFECTO):
         "ascendentes": len([k for k in claves if k.startswith('ascendente_')]),
         "nodos_signos": len([k for k in claves if re.match(r'^nodo_(norte|sur)_(?!casa_)', k)]),
         "nodos_casas": len([k for k in claves if re.match(r'^nodo_(norte|sur)_casa_\d+$', k)]),
+        "puentes_nodales": len([k for k in claves if k.startswith('puente_nn_')]),
         "fortuna": len([k for k in claves if k.startswith('fortuna_')]),
         "aspectos": len([k for k in claves if k.startswith('aspectos_')])
     }
