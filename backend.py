@@ -199,24 +199,31 @@ def obtener_interpretaciones_carta(natal_chart_data, lang=IDIOMA_POR_DEFECTO):
         # Nodo Norte en casa
         if casa_norte and 1 <= casa_norte <= 12:
             agregar(f"nodo_norte_casa_{casa_norte}", {'tipo': 'nodo_norte_casa', 'casa': casa_norte})
-        # PUENTE DE SÍNTESIS: cruza el signo del Nodo Norte con la casa donde cae.
-        # Un solo puente cubre todo el eje, porque el Nodo Sur queda determinado.
-        if signo_norte and casa_norte and 1 <= casa_norte <= 12:
-            casa_sur_eje = casa_norte + 6 if casa_norte <= 6 else casa_norte - 6
-            agregar(f"puente_nn_{signo_norte}_casa_{casa_norte}", {
-                'tipo': 'puente_nodal',
-                'signo_norte': signo_norte,
-                'casa_norte': casa_norte,
-                'signo_sur': SIGNOS_OPUESTOS.get(signo_norte),
-                'casa_sur': casa_sur_eje
-            })
-
+    
     # Nodo Sur en casa (material nuevo — fase 11)
     if 'south_node' in extras:
         casa_sur = extras['south_node'].get('house')
         if casa_sur and 1 <= casa_sur <= 12:
             agregar(f"nodo_sur_casa_{casa_sur}", {'tipo': 'nodo_sur_casa', 'casa': casa_sur})
 
+    
+    # PUENTE DE SÍNTESIS: cruza el signo del Nodo Norte con la casa donde cae.
+    # Va aquí, al final del eje nodal, para que se lea como síntesis después de
+    # los textos de nodos en signos y en casas. Un solo puente cubre todo el eje,
+    # porque el Nodo Sur queda determinado por el Norte.
+    if 'true_node' in extras:
+        signo_nn = normalizar_signo(extras['true_node'].get('sign'))
+        casa_nn = extras['true_node'].get('house')
+        if signo_nn and casa_nn and 1 <= casa_nn <= 12:
+            casa_sur_eje = casa_nn + 6 if casa_nn <= 6 else casa_nn - 6
+            agregar(f"puente_nn_{signo_nn}_casa_{casa_nn}", {
+                'tipo': 'puente_nodal',
+                'signo_norte': signo_nn,
+                'casa_norte': casa_nn,
+                'signo_sur': SIGNOS_OPUESTOS.get(signo_nn),
+                'casa_sur': casa_sur_eje
+            })
+            
     # Parte de la Fortuna
     if 'fortuna' in extras:
         signo = normalizar_signo(extras['fortuna'].get('sign'))
