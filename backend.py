@@ -702,8 +702,9 @@ def root():
 
 
 @app.post("/calculate")
-def calculate_chart(birth: BirthData):
+def calculate_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO):
     try:
+        lang = normalizar_idioma(lang)
         # Asegurar que el path de efemérides esté configurado en cada llamada
         # (necesario porque pyswisseph puede resetear el path internamente)
         if _os.path.isdir(_ephe_dir):
@@ -860,7 +861,7 @@ def calculate_chart(birth: BirthData):
         # 9. Format response
         natal_planets_formatted = {}
         for name, data in natal_planets.items():
-            pos = format_position(data['longitude'])
+            pos = format_position(data['longitude'], lang)
             natal_planets_formatted[name] = {
                 **pos,
                 'retrograde': data['retrograde'],
@@ -871,7 +872,7 @@ def calculate_chart(birth: BirthData):
 
         cusps_formatted = []
         for i, c in enumerate(houses['cusps']):
-            pos = format_position(c)
+            pos = format_position(c, lang)
             ruler = get_house_ruler(c)
             ruler_data = natal_planets[ruler] if ruler in natal_planets else None
             cusps_formatted.append({
@@ -879,13 +880,13 @@ def calculate_chart(birth: BirthData):
                 'house_number': i + 1,
                 'ruler': ruler,
                 'ruler_house': ruler_data['house'] if ruler_data else None,
-                'ruler_sign': format_position(ruler_data['longitude'])['sign'] if ruler_data else None
+                'ruler_sign': format_position(ruler_data['longitude'], lang)['sign'] if ruler_data else None
             })
 
         transits_formatted = {}
         for tp, data in transits_now.items():
             transits_formatted[tp] = {
-                **format_position(data['longitude']),
+                **format_position(data['longitude'], lang),
                 'retrograde': data['retrograde'],
                 'house_in_natal': data['house_in_natal'],
                 'sign_rules_houses': data.get('sign_rules_houses', []),
@@ -895,7 +896,7 @@ def calculate_chart(birth: BirthData):
         # Format extra points (Quirón, Nodos, Lilith, Partes Árabes)
         extras_formatted = {}
         for name, data in natal_extra.items():
-            pos = format_position(data['longitude'])
+            pos = format_position(data['longitude'], lang)
             extras_formatted[name] = {
                 **pos,
                 'retrograde': data.get('retrograde', False),
@@ -919,8 +920,8 @@ def calculate_chart(birth: BirthData):
             'natal_chart': {
                 'planets': natal_planets_formatted,
                 'extras': extras_formatted,
-                'asc': format_position(houses['asc']),
-                'mc': format_position(houses['mc']),
+                'asc': format_position(houses['asc'], lang),
+                'mc': format_position(houses['mc'], lang),
                 'houses': cusps_formatted,
                 'aspects': natal_aspects
             },
@@ -980,8 +981,8 @@ def interpretations_info(lang: str = IDIOMA_POR_DEFECTO):
 def interpret_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO):
     """Calcula la carta natal y devuelve todas las interpretaciones aplicables.
     Parámetro opcional ?lang=es|en"""
-    chart_data = calculate_chart(birth)
     lang = normalizar_idioma(lang)
+    chart_data = calculate_chart(birth, lang)
     interpretaciones = obtener_interpretaciones_carta(chart_data['natal_chart'], lang)
 
     return {
