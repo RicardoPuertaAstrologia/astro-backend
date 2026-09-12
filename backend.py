@@ -273,7 +273,7 @@ ADDITIONAL_BODIES = {
 ASPECT_FORMING_POINTS = ['chiron', 'true_node', 'south_node']
 
 # Slow planets used for transits
-TRANSIT_PLANETS = ['jupiter', 'saturn', 'uranus', 'neptune', 'pluto']
+TRANSIT_PLANETS = ['jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'chiron', 'lilith']
 
 ASPECT_TYPES = [
     {'name_es':'Conjunción', 'name_en':'Conjunction', 'angle':0,   'orb_natal':8.0, 'orb_transit':2.0, 'glyph':'☌', 'nature':'major'},
