@@ -272,6 +272,9 @@ ADDITIONAL_BODIES = {
 # Lilith y Partes Árabes solo se posicionan, no generan aspectos
 ASPECT_FORMING_POINTS = ['chiron', 'true_node', 'south_node']
 
+# Todos los cuerpos con efemérides propias, planetas y asteroides juntos.
+TRANSITABLE_BODIES = {**PLANETS, **ADDITIONAL_BODIES}
+
 # Slow planets used for transits
 TRANSIT_PLANETS = ['jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'chiron', 'lilith']
 
@@ -649,7 +652,7 @@ def calculate_transit_calendar(natal_planets, jd_start, jd_end):
     natal_keys = list(natal_planets.keys())
 
     for transit_p in TRANSIT_PLANETS:
-        planet_id = PLANETS[transit_p]
+        planet_id = TRANSITABLE_BODIES[transit_p]
         for natal_p in natal_keys:
             natal_lon = natal_planets[natal_p]['longitude']
             for asp in ASPECT_TYPES:
@@ -792,7 +795,7 @@ def calculate_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO):
 
         transits_now = {}
         for tp in TRANSIT_PLANETS:
-            data = calc_planet(jd_now, PLANETS[tp])
+            data = calc_planet(jd_now, TRANSITABLE_BODIES[tp])
             data['house_in_natal'] = get_house_for_longitude(data['longitude'], houses['cusps'])
 
             # Dual reading: el signo donde está el tránsito puede regir otra casa natal.
@@ -828,7 +831,7 @@ def calculate_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO):
         focus_planet = birth.transit_planet if birth.transit_planet in TRANSIT_PLANETS else 'uranus'
         jd_start = jd_now
         jd_end = jd_now + 365  # 12 meses
-        focus_planet_id = PLANETS[focus_planet]
+        focus_planet_id = TRANSITABLE_BODIES[focus_planet]
 
         focus_calendar = []
         for natal_name in natal_full:
