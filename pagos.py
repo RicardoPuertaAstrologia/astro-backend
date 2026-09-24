@@ -16,7 +16,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 from typing import Optional
 
@@ -337,27 +337,8 @@ def entregar_informe(datos: DatosEntrega):
     lang = "en" if str(datos.lang).lower().startswith("en") else "es"
 
     # Se calcula todo de nuevo acá, en el servidor.
-    from backend import BirthData, calculate_chart, obtener_interpretaciones_carta
-    import informe as informe_mod
     import correo as correo_mod
-
-    try:
-        nacimiento = BirthData(**datos.nacimiento)
-        carta = calculate_chart(nacimiento, lang)
-        interpretaciones = obtener_interpretaciones_carta(carta["natal_chart"], lang)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"No se pudo calcular la carta: {e}")
-
-    edad = _edad_zodiacal(datos.nacimiento, lang)
-
-    try:
-        pdf = informe_mod.construir_pdf(carta, interpretaciones, edad,
-                                        datos.secciones or [], datos.imagen, lang)
-    except Exception as e:
-        print("Informe: falló el PDF:", repr(e))
-        raise HTTPException(status_code=500, detail="No se pudo armar el informe en PDF.")
+    pdf = _armar_pdf(datos.nacimiento, lang, datos.imagen, datos.secciones)
 
     enviado, motivo = correo_mod.enviar_informe(
         datos.correo, pdf, (datos.nacimiento.get("name") or ""), lang)
@@ -370,6 +351,56 @@ def entregar_informe(datos: DatosEntrega):
         "horas": HORAS_DE_PERMISO,
         "tamano_pdf": len(pdf),
     }
+
+
+class DatosPDF(BaseModel):
+    permiso: str
+    lang: str = "es"
+    nacimiento: dict
+    imagen: Optional[str] = None
+    secciones: Optional[list] = None
+
+
+def _armar_pdf(nacimiento_dict, lang, imagen, secciones):
+    """Arma el PDF completo. Lo usan el correo y la descarga, para que
+    la persona reciba exactamente el mismo documento por los dos lados."""
+    from backend import BirthData, calculate_chart, obtener_interpretaciones_carta
+    import informe as informe_mod
+
+    try:
+        nacimiento = BirthData(**nacimiento_dict)
+        carta = calculate_chart(nacimiento, lang)
+        interpretaciones = obtener_interpretaciones_carta(carta["natal_chart"], lang)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"No se pudo calcular la carta: {e}")
+
+    edad = _edad_zodiacal(nacimiento_dict, lang)
+    try:
+        return informe_mod.construir_pdf(carta, interpretaciones, edad,
+                                         secciones or [], imagen, lang)
+    except Exception as e:
+        print("Informe: falló el PDF:", repr(e))
+        raise HTTPException(status_code=500, detail="No se pudo armar el informe en PDF.")
+
+
+@router.post("/cobro/pdf")
+def descargar_pdf(datos: DatosPDF):
+    """Devuelve el MISMO informe que se manda por correo, para que el botón
+    de descarga no dependa de lo que el navegador tenga abierto en pantalla."""
+    if not permiso_valido(datos.permiso):
+        raise HTTPException(status_code=402, detail="Este informe hace parte de la versión de pago.")
+
+    lang = "en" if str(datos.lang).lower().startswith("en") else "es"
+    pdf = _armar_pdf(datos.nacimiento, lang, datos.imagen, datos.secciones)
+    nombre = (datos.nacimiento.get("name") or "informe").strip()
+    seguro = "".join(c for c in nombre if c.isalnum() or c in " -_").strip() or "informe"
+    return Response(
+        content=bytes(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="Carta natal - {seguro}.pdf"'},
+    )
 
 
 @router.get("/correo/probar")

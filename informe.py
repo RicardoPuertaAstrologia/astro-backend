@@ -40,15 +40,36 @@ def _limpiar(texto):
         "—": "-", "–": "-", "―": "-",
         "“": '"', "”": '"', "„": '"', "‘": "'", "’": "'",
         "…": "...", " ": " ", "​": "",
-        "☉": "Sol", "☽": "Luna", "☿": "Mercurio", "♀": "Venus", "♂": "Marte",
-        "♃": "Jupiter", "♄": "Saturno", "♅": "Urano", "♆": "Neptuno", "♇": "Pluton",
-        "⚷": "Quiron", "☊": "Nodo Norte", "☋": "Nodo Sur", "⚸": "Lilith", "⊕": "Fortuna",
         "′": "'", "″": '"',
     }
     for a, b in cambios.items():
         t = t.replace(a, b)
+
+    # Los símbolos de planetas y aspectos se QUITAN, no se traducen: en el
+    # PDF el nombre siempre va al lado, y traducirlos producía repeticiones
+    # como "Jupiter Júpiter" o "Lilith Lilith".
+    simbolos = "☉☽☾☿♀♂♃♄♅♆♇⚷☊☋⚸⊕⊗☌☍□△▽⚹✶✳✱"
+    t = re.sub(r"\(\s*[" + simbolos + r"]+\s*\)", "", t)   # paréntesis que quedarían vacíos
+    for c in simbolos:
+        t = t.replace(c, " ")
     t = re.sub(r"<[^>]+>", "", t)          # por si viene algo de HTML
-    return t.encode("latin-1", "replace").decode("latin-1")
+    # Los emojis y demás signos que la fuente no tiene se QUITAN.
+    # Antes se cambiaban por "?", y por eso los íconos de las áreas de
+    # vida salían como signos de interrogación.
+    t = "".join(c for c in t if c in "\n\t" or ord(c) < 256)
+    t = re.sub(r"\(\s*\)", "", t)
+    t = re.sub(r"\s+([,.;:!?])", r"\1", t)
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    return t.strip(" \t")
+
+
+def _es_etiqueta(linea):
+    """Una línea corta, toda en mayúsculas, es un rótulo y no un párrafo."""
+    t = linea.strip()
+    if len(t) > 42 or len(t) < 3:
+        return False
+    letras = [c for c in t if c.isalpha()]
+    return bool(letras) and all(c.isupper() for c in letras)
 
 
 class InformePDF(FPDF):
@@ -87,6 +108,15 @@ class InformePDF(FPDF):
         self.set_text_color(*TINTA)
         self.multi_cell(0, 6, _limpiar(texto), new_x="LMARGIN", new_y="NEXT")
         self.ln(1)
+
+    def etiqueta(self, texto):
+        """Las mayúsculas cortas del navegador ("TU CARTA") salen como
+        etiqueta pequeña, igual que en el resto del informe."""
+        self.ln(1)
+        self.set_font("Helvetica", "B", 7.5)
+        self.set_text_color(*SUAVE)
+        self.cell(0, 4.5, _limpiar(texto).upper(), new_x="LMARGIN", new_y="NEXT")
+        self.ln(0.5)
 
     def parrafo(self, texto, cursiva=False):
         self.set_font("Times", "I" if cursiva else "", 11)
@@ -355,8 +385,13 @@ def construir_pdf(carta, interpretaciones, edad_texto=None, secciones=None,
             if bloque.get("subtitulo"):
                 pdf.subtitulo(bloque["subtitulo"])
             for parrafo in (bloque.get("parrafos") or []):
-                if str(parrafo).strip():
-                    pdf.parrafo(str(parrafo).strip())
+                linea = str(parrafo).strip()
+                if not linea:
+                    continue
+                if _es_etiqueta(linea):
+                    pdf.etiqueta(linea)
+                else:
+                    pdf.parrafo(linea)
 
     # ---------- EDAD ZODIACAL ----------
     if edad_texto:
