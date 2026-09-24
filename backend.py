@@ -41,6 +41,11 @@ else:
     swe.set_ephe_path(None)
 
 tf = TimezoneFinder()
+
+# Cobro del informe (Wompi + TRM)
+from pagos import router as router_pagos
+app.include_router(router_pagos)
+
 # ============================================================
 # CARGAR INTERPRETACIONES (biblioteca bilingüe — 403 textos por idioma)
 # ============================================================
