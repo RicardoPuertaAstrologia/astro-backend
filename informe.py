@@ -225,6 +225,65 @@ _ORDEN_PLANETAS = ["sol", "luna", "mercurio", "venus", "marte", "jupiter", "satu
                    "urano", "neptuno", "pluton", "quiron", "lilith"]
 
 
+ASPECTOS_ES = ["Conjunción", "Sextil", "Cuadratura", "Trígono", "Oposición"]
+ASPECTOS_EN = ["Conjunction", "Sextile", "Square", "Trine", "Opposition"]
+
+_CIERRES = re.compile(
+    r"^(Spoiler ácido|Otro pecado|Y un tercer|Otro riesgo|Tu camino evolutivo|"
+    r"Tu trabajo evolutivo|Cuando alineas|Acidic spoiler|Another typical sin|"
+    r"And a third|Another risk|Your evolutionary|When you align)", re.IGNORECASE)
+
+
+def filtrar_por_aspecto(texto, nombre_aspecto):
+    """Cada texto de aspectos trae los cinco casos (conjunción, sextil,
+    cuadratura, trígono y oposición). En pantalla se muestra solo el que
+    la carta tiene de verdad; acá se hace lo mismo para el PDF.
+
+    Se conserva la introducción, el párrafo del aspecto que aplica y el
+    cierre (spoiler ácido, camino evolutivo). Los otros cuatro se quitan."""
+    if not texto or not nombre_aspecto:
+        return texto
+
+    if nombre_aspecto in ASPECTOS_ES:
+        lista = ASPECTOS_ES
+    elif nombre_aspecto in ASPECTOS_EN:
+        lista = ASPECTOS_EN
+    else:
+        return texto                      # aspecto desconocido: no se toca
+    buscado = nombre_aspecto
+
+    intro, elegido, cierre = [], [], []
+    estado = "intro"
+
+    for p in re.split(r"\n\n+", texto):
+        limpio = p.strip()
+        encabezado = None
+        for asp in lista:
+            if re.match(r"^\*\*[^*]*\b" + re.escape(asp) + r"\b", limpio, re.IGNORECASE):
+                encabezado = asp
+                break
+
+        if encabezado:
+            if encabezado == buscado:
+                estado = "elegido"
+                elegido.append(p)
+            else:
+                estado = "otro"
+        elif _CIERRES.match(limpio):
+            estado = "cierre"
+            cierre.append(p)
+        else:
+            if estado == "intro":
+                intro.append(p)
+            elif estado == "elegido":
+                elegido.append(p)
+            elif estado == "cierre":
+                cierre.append(p)
+            # si estado == "otro", ese párrafo se descarta
+
+    return "\n\n".join(intro + elegido + cierre)
+
+
 def ordenar_interpretaciones(interpretaciones, es=True):
     """Convierte el diccionario del backend en una lista ordenada
     de {titulo, texto}, como se lee en pantalla."""
@@ -238,7 +297,9 @@ def ordenar_interpretaciones(interpretaciones, es=True):
             _ORDEN.index(tipo) if tipo in _ORDEN else 99,
             _ORDEN_PLANETAS.index(planeta) if planeta in _ORDEN_PLANETAS else 99,
             item.get("casa") or 0,
-            {"titulo": titulo_de(clave, item, es), "texto": item.get("texto", "")}
+            {"titulo": titulo_de(clave, item, es),
+             "texto": (filtrar_por_aspecto(item.get("texto", ""), item.get("aspecto"))
+                       if tipo == "aspecto" else item.get("texto", ""))}
         ))
     items.sort(key=lambda x: (x[0], x[1], x[2]))
     return [x[3] for x in items]

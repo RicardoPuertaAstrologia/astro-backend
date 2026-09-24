@@ -248,11 +248,21 @@ async def evento_wompi(request: Request):
 PROTEGER_TEXTOS = os.environ.get("PROTEGER_TEXTOS", "no").strip().lower() == "si"
 
 
+def textos_protegidos():
+    """True cuando la tienda está cerrada con llave."""
+    return PROTEGER_TEXTOS
+
+
+def hay_permiso(permiso):
+    """True si viene un permiso de pago válido."""
+    return bool(permiso) and permiso_valido(permiso)
+
+
 def exigir_permiso(permiso):
     """Lo llama el backend antes de entregar los textos completos."""
     if not PROTEGER_TEXTOS:
         return True
-    if permiso_valido(permiso):
+    if hay_permiso(permiso):
         return True
     raise HTTPException(status_code=402,
                         detail="Este contenido hace parte del informe completo.")
@@ -396,10 +406,11 @@ def descargar_pdf(datos: DatosPDF):
     pdf = _armar_pdf(datos.nacimiento, lang, datos.imagen, datos.secciones)
     nombre = (datos.nacimiento.get("name") or "informe").strip()
     seguro = "".join(c for c in nombre if c.isalnum() or c in " -_").strip() or "informe"
+    base = "Natal chart - " if lang == "en" else "Carta natal - "
     return Response(
         content=bytes(pdf),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="Carta natal - {seguro}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="{base}{seguro}.pdf"'},
     )
 
 

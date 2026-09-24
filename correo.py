@@ -134,7 +134,8 @@ def enviar_informe(destino, pdf_bytes, nombre="", lang="es"):
 
     es = (lang != "en")
     saludo = f" {nombre.split()[0]}" if nombre else ""
-    archivo_pdf = ("Carta natal - " + (nombre or "informe")).strip() + ".pdf"
+    archivo_pdf = (("Natal chart - " if not es else "Carta natal - ")
+                   + (nombre or ("report" if not es else "informe"))).strip() + ".pdf"
 
     if BREVO_API_KEY:
         return _enviar_por_api(
@@ -152,7 +153,7 @@ def enviar_informe(destino, pdf_bytes, nombre="", lang="es"):
         mensaje["Bcc"] = COPIA_OCULTA
     mensaje.set_content((CUERPO_ES if es else CUERPO_EN).format(nombre=saludo))
 
-    archivo = ("Carta natal - " + (nombre or "informe")).strip() + ".pdf"
+    archivo = archivo_pdf
     mensaje.add_attachment(pdf_bytes, maintype="application", subtype="pdf",
                            filename=archivo)
 
