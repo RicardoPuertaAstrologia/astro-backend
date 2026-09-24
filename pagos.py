@@ -17,6 +17,8 @@ import urllib.error
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
+from typing import Optional
 
 router = APIRouter()
 
@@ -257,8 +259,145 @@ def exigir_permiso(permiso):
 
 
 # ------------------------------------------------------------
+# ENTREGA DEL INFORME: PDF + CORREO
+# ------------------------------------------------------------
+_edades_cache = None
+
+
+def _cargar_edades():
+    global _edades_cache
+    if _edades_cache is None:
+        ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "edades.json")
+        try:
+            with open(ruta, "r", encoding="utf-8") as f:
+                _edades_cache = json.load(f)
+        except Exception as e:
+            print("Edades: no se pudo cargar", ruta, e)
+            _edades_cache = []
+    return _edades_cache
+
+
+def _edad_de(nacimiento):
+    hoy = datetime.now()
+    edad = hoy.year - nacimiento["year"]
+    if (hoy.month, hoy.day) < (nacimiento["month"], nacimiento["day"]):
+        edad -= 1
+    return edad
+
+
+def _edad_zodiacal(nacimiento, lang):
+    edades = _cargar_edades()
+    if not edades:
+        return None
+    edad = _edad_de(nacimiento)
+    elegida = None
+    for e in edades:
+        if e["min"] <= edad <= e["max"]:
+            elegida = e
+            break
+    if elegida is None:
+        siguientes = [e for e in edades if e["min"] > edad]
+        elegida = siguientes[0] if siguientes else edades[-1]
+    d = elegida.get(lang) or elegida.get("es")
+    rango = (str(elegida["min"]) if elegida["min"] == elegida["max"]
+             else f'{elegida["min"]} a {elegida["max"]}')
+    if lang == "en" and elegida["min"] != elegida["max"]:
+        rango = f'{elegida["min"]} to {elegida["max"]}'
+    return {
+        "rango": rango + (" años" if lang != "en" else " years"),
+        "titulo": d.get("titulo", ""),
+        "pasa": d.get("pasa", ""),
+        "spoiler": d.get("spoiler", ""),
+        "retos": d.get("retos", []),
+        "trabajar": d.get("trabajar", ""),
+        "edad_actual": edad,
+    }
+
+
+class DatosEntrega(BaseModel):
+    id: str
+    referencia: str = ""
+    correo: str
+    lang: str = "es"
+    nacimiento: dict
+    imagen: Optional[str] = None
+    secciones: Optional[list] = None
+
+
+@router.post("/cobro/entregar")
+def entregar_informe(datos: DatosEntrega):
+    """Verifica el pago, arma el PDF y lo manda al correo de la persona."""
+    transaccion = consultar_transaccion(datos.id)
+    if transaccion.get("status") != "APPROVED":
+        raise HTTPException(status_code=402, detail="Ese pago no está aprobado.")
+    if datos.referencia and transaccion.get("reference") and \
+            datos.referencia != transaccion.get("reference"):
+        raise HTTPException(status_code=400, detail="La referencia no corresponde a ese pago.")
+
+    lang = "en" if str(datos.lang).lower().startswith("en") else "es"
+
+    # Se calcula todo de nuevo acá, en el servidor.
+    from backend import BirthData, calculate_chart, obtener_interpretaciones_carta
+    import informe as informe_mod
+    import correo as correo_mod
+
+    try:
+        nacimiento = BirthData(**datos.nacimiento)
+        carta = calculate_chart(nacimiento, lang)
+        interpretaciones = obtener_interpretaciones_carta(carta["natal_chart"], lang)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"No se pudo calcular la carta: {e}")
+
+    edad = _edad_zodiacal(datos.nacimiento, lang)
+
+    try:
+        pdf = informe_mod.construir_pdf(carta, interpretaciones, edad,
+                                        datos.secciones or [], datos.imagen, lang)
+    except Exception as e:
+        print("Informe: falló el PDF:", repr(e))
+        raise HTTPException(status_code=500, detail="No se pudo armar el informe en PDF.")
+
+    enviado, motivo = correo_mod.enviar_informe(
+        datos.correo, pdf, (datos.nacimiento.get("name") or ""), lang)
+
+    return {
+        "ok": True,
+        "correo_enviado": enviado,
+        "motivo": "" if enviado else motivo,
+        "permiso": crear_permiso(transaccion.get("reference") or datos.referencia),
+        "horas": HORAS_DE_PERMISO,
+        "tamano_pdf": len(pdf),
+    }
+
+
+@router.get("/correo/probar")
+def probar_correo(a: str = ""):
+    """Envía un correo corto de prueba. Se usa una vez, para comprobar la
+    configuración: /correo/probar?a=tucorreo@dominio.com"""
+    import correo as correo_mod
+    if not a:
+        return {"configurado": correo_mod.correo_configurado(),
+                "servidor": bool(correo_mod.SERVIDOR),
+                "usuario": bool(correo_mod.USUARIO),
+                "clave": bool(correo_mod.CLAVE),
+                "puerto": correo_mod.PUERTO}
+    enviado, motivo = correo_mod.enviar_prueba(a)
+    return {"enviado": enviado, "motivo": motivo}
+
+
+# ------------------------------------------------------------
 # ESTADO (para revisar que todo quedó bien configurado)
 # ------------------------------------------------------------
+def _correo_listo():
+    try:
+        import correo as correo_mod
+        return correo_mod.correo_configurado()
+    except Exception:
+        return False
+
+
 @router.get("/cobro/estado")
 def estado_cobro():
     """No muestra ninguna llave: solo dice si están puestas."""
@@ -274,6 +413,7 @@ def estado_cobro():
         "secreto_eventos_configurado": bool(WOMPI_EVENTS_SECRET),
         "secreto_tokens_configurado": bool(os.environ.get("SECRETO_TOKENS")),
         "textos_protegidos": PROTEGER_TEXTOS,
+        "correo_configurado": _correo_listo(),
         "trm_disponible": trm_ok,
         "precio": p,
     }
