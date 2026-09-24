@@ -387,9 +387,27 @@ def _armar_pdf(nacimiento_dict, lang, imagen, secciones):
         raise HTTPException(status_code=400, detail=f"No se pudo calcular la carta: {e}")
 
     edad = _edad_zodiacal(nacimiento_dict, lang)
+
+    # El calendario de doce meses que devuelve el servidor es solo el del
+    # planeta señalado en pantalla. Para el informe se calculan los siete
+    # planetas lentos, uno por uno, y van todos.
+    calendario = []
+    try:
+        lentos = list((carta.get("transits") or {}).get("positions") or {})
+        for planeta in lentos:
+            datos = dict(nacimiento_dict)
+            datos["transit_planet"] = planeta
+            otra = calculate_chart(BirthData(**datos), lang)
+            eventos = ((otra.get("calendar_12mo") or {}).get("events")) or []
+            if eventos:
+                calendario.append({"planeta": planeta, "eventos": eventos})
+    except Exception as e:
+        print("Informe: no se pudo armar el calendario completo:", repr(e))
+
     try:
         return informe_mod.construir_pdf(carta, interpretaciones, edad,
-                                         secciones or [], imagen, lang)
+                                         secciones or [], imagen, lang,
+                                         calendario=calendario)
     except Exception as e:
         print("Informe: falló el PDF:", repr(e))
         raise HTTPException(status_code=500, detail="No se pudo armar el informe en PDF.")

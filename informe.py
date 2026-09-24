@@ -118,6 +118,16 @@ class InformePDF(FPDF):
         self.cell(0, 4.5, _limpiar(texto).upper(), new_x="LMARGIN", new_y="NEXT")
         self.ln(0.5)
 
+    def renglon(self, texto):
+        """Una línea de lista, apretada: el calendario es una agenda,
+        no un texto corrido."""
+        if self.get_y() > self.h - 30:
+            self.add_page()
+        self.set_font("Times", "", 10.5)
+        self.set_text_color(*TINTA)
+        self.multi_cell(0, 4.6, _limpiar(texto), markdown=True,
+                        new_x="LMARGIN", new_y="NEXT")
+
     def parrafo(self, texto, cursiva=False):
         self.set_font("Times", "I" if cursiva else "", 11)
         self.set_text_color(*TINTA)
@@ -159,6 +169,19 @@ _PLANETAS = {
     "saturno": ("Saturno", "Saturn"), "urano": ("Urano", "Uranus"),
     "neptuno": ("Neptuno", "Neptune"), "pluton": ("Plutón", "Pluto"),
     "quiron": ("Quirón", "Chiron"), "lilith": ("Lilith", "Lilith"),
+    # Los textos de la biblioteca usan los nombres en español; los datos
+    # de los tránsitos y el calendario los usan en inglés. Valen los dos.
+    "sun": ("Sol", "Sun"), "moon": ("Luna", "Moon"), "mercury": ("Mercurio", "Mercury"),
+    "mars": ("Marte", "Mars"), "saturn": ("Saturno", "Saturn"),
+    "uranus": ("Urano", "Uranus"), "neptune": ("Neptuno", "Neptune"),
+    "pluto": ("Plutón", "Pluto"), "chiron": ("Quirón", "Chiron"),
+    "true_node": ("Nodo Norte", "North Node"), "north_node": ("Nodo Norte", "North Node"),
+    "south_node": ("Nodo Sur", "South Node"),
+    "fortuna": ("Rueda de la Fortuna", "Part of Fortune"),
+    "infortunio": ("Parte del Infortunio", "Part of Misfortune"),
+    "asc": ("Ascendente", "Ascendant"), "ascendente": ("Ascendente", "Ascendant"),
+    "ascendant": ("Ascendente", "Ascendant"),
+    "mc": ("Medio Cielo", "Midheaven"), "medio_cielo": ("Medio Cielo", "Midheaven"),
 }
 
 
@@ -316,13 +339,56 @@ def _fecha_larga(bd, lang):
         return str(bd.get("datetime", ""))
 
 
+MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+            "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+MESES_EN = ["January", "February", "March", "April", "May", "June", "July",
+            "August", "September", "October", "November", "December"]
+
+
+def _fecha_evento(texto_fecha, es):
+    """De '2026-10-22 09:18 UT' saca (datetime, '22 de octubre de 2026')."""
+    from datetime import datetime as _dt
+    try:
+        f = _dt.strptime(str(texto_fecha)[:10], "%Y-%m-%d")
+    except Exception:
+        return None, str(texto_fecha)
+    if es:
+        return f, f"{f.day} de {MESES_ES[f.month - 1]} de {f.year}"
+    return f, f"{MESES_EN[f.month - 1]} {f.day}, {f.year}"
+
+
+def _ya_paso(fecha):
+    from datetime import datetime as _dt
+    return fecha.date() < _dt.utcnow().date()
+
+
+def _cuanto_falta(fecha, es):
+    """'dentro de 3 meses', 'este mes', 'dentro de un año'."""
+    from datetime import datetime as _dt
+    if not fecha:
+        return ""
+    dias = (fecha.date() - _dt.utcnow().date()).days
+    if dias < 0:
+        return "ya pasó" if es else "already past"
+    if dias < 30:
+        return "este mes" if es else "this month"
+    meses = round(dias / 30.4)
+    if meses <= 1:
+        return "dentro de un mes" if es else "in a month"
+    if meses >= 12:
+        return "dentro de un año" if es else "in a year"
+    return (f"dentro de {meses} meses" if es else f"in {meses} months")
+
+
 def construir_pdf(carta, interpretaciones, edad_texto=None, secciones=None,
-                  imagen_png=None, lang="es"):
+                  imagen_png=None, lang="es", calendario=None):
     """carta: lo que devuelve /calculate (birth_data + natal_chart)
        interpretaciones: lista de {titulo, texto} del servidor
        edad_texto: dict con la edad zodiacal de la persona (o None)
        secciones: [{titulo, bloques:[{subtitulo, parrafos:[...]}]}] del navegador
-       imagen_png: la carta dibujada, en base64 (data:image/png;base64,...)"""
+       imagen_png: la carta dibujada, en base64 (data:image/png;base64,...)
+       calendario: [{planeta, eventos:[...]}] de los doce meses, uno por
+                   cada planeta lento, calculado en el servidor"""
     es = (lang != "en")
     bd = carta.get("birth_data", {}) or {}
     natal = carta.get("natal_chart", {}) or {}
@@ -453,6 +519,50 @@ def construir_pdf(carta, interpretaciones, edad_texto=None, secciones=None,
                     pdf.etiqueta(linea)
                 else:
                     pdf.parrafo(linea)
+
+    # ---------- CALENDARIO DE DOCE MESES ----------
+    # Se arma con los datos, no copiando el texto de la pantalla: en
+    # pantalla solo se ve el planeta que la persona tenga señalado, y
+    # cada evento queda partido en renglones sueltos.
+    if calendario:
+        hay = [c for c in calendario if c.get("eventos")]
+        if hay:
+            pdf.add_page()
+            pdf.titulo_seccion("Tu calendario · 12 meses" if es else "Your 12-month calendar")
+            pdf.parrafo(
+                "Las fechas en que cada planeta lento toca, por aspecto exacto, "
+                "un punto de tu carta natal durante los próximos doce meses."
+                if es else
+                "The dates when each slow planet makes an exact aspect to a point "
+                "of your natal chart over the next twelve months.")
+            for grupo in hay:
+                futuros = [e for e in grupo["eventos"]
+                           if (lambda f: f is not None and not _ya_paso(f))(
+                               _fecha_evento(e.get("date"), es)[0])]
+                if not futuros:
+                    continue
+                grupo = {"planeta": grupo.get("planeta"), "eventos": futuros}
+                pdf.subtitulo(_nombre_planeta(grupo.get("planeta"), es))
+                mes_actual = None
+                for ev in grupo["eventos"]:
+                    fecha, _ = _fecha_evento(ev.get("date"), es)
+                    if fecha is None or _ya_paso(fecha):
+                        continue   # el calendario mira hacia adelante
+                    mes = (fecha.year, fecha.month)
+                    if mes != mes_actual:
+                        mes_actual = mes
+                        nombre_mes = (MESES_ES if es else MESES_EN)[fecha.month - 1]
+                        falta = _cuanto_falta(fecha, es)
+                        rotulo = f"{nombre_mes} {fecha.year}"
+                        if falta:
+                            rotulo += f" · {falta}"
+                        pdf.etiqueta(rotulo)
+                    aspecto = (ev.get("aspect_es" if es else "aspect_en") or "").lower()
+                    natal = _nombre_planeta(ev.get("natal_planet"), es)
+                    if es:
+                        pdf.renglon(f"**{fecha.day}** · {aspecto} a tu {natal}")
+                    else:
+                        pdf.renglon(f"**{fecha.day}** · {aspecto} to your {natal}")
 
     # ---------- EDAD ZODIACAL ----------
     if edad_texto:
