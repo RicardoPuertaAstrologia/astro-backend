@@ -24,6 +24,7 @@ _dir = os.path.dirname(os.path.abspath(__file__))
 TINTA = (21, 24, 29)
 SUAVE = (90, 95, 103)
 ORO = (150, 118, 47)
+ORO_OSCURO = (124, 96, 34)    # el dorado, un tono más oscuro, para texto
 LINEA = (226, 222, 212)
 
 MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
@@ -127,6 +128,32 @@ class InformePDF(FPDF):
         self.set_text_color(*TINTA)
         self.multi_cell(0, 4.6, _limpiar(texto), markdown=True,
                         new_x="LMARGIN", new_y="NEXT")
+
+    def destacado(self, texto):
+        """El renglón que nombra un aspecto: en negrilla y en el dorado de
+        la marca, para que ordene la lectura de un vistazo."""
+        if self.get_y() > self.h - 34:
+            self.add_page()
+        self.ln(2)
+        self.set_font("Times", "B", 11.5)
+        self.set_text_color(*ORO_OSCURO)
+        self.multi_cell(0, 5.4, _limpiar(texto), new_x="LMARGIN", new_y="NEXT")
+        self.set_text_color(*TINTA)
+        self.ln(0.5)
+
+    def rotulo_mes(self, texto):
+        """El mes, con su raya: es lo que la persona busca al hojear."""
+        if self.get_y() > self.h - 32:
+            self.add_page()
+        self.ln(3)
+        self.set_font("Helvetica", "B", 9)
+        self.set_text_color(*ORO_OSCURO)
+        self.cell(0, 5, _limpiar(texto).upper(), new_x="LMARGIN", new_y="NEXT")
+        self.set_draw_color(*LINEA)
+        y = self.get_y() + 0.5
+        self.line(self.l_margin, y, self.l_margin + 60, y)
+        self.ln(3)
+        self.set_text_color(*TINTA)
 
     def parrafo(self, texto, cursiva=False):
         self.set_font("Times", "I" if cursiva else "", 11)
@@ -512,6 +539,17 @@ def construir_pdf(carta, interpretaciones, edad_texto=None, secciones=None,
             if bloque.get("subtitulo"):
                 pdf.subtitulo(bloque["subtitulo"])
             for parrafo in (bloque.get("parrafos") or []):
+                # La app puede marcar un renglón como destacado, por
+                # ejemplo el que nombra el aspecto entre dos planetas.
+                if isinstance(parrafo, dict):
+                    linea = str(parrafo.get("v", "")).strip()
+                    if not linea:
+                        continue
+                    if parrafo.get("t") == "aspecto":
+                        pdf.destacado(linea)
+                    else:
+                        pdf.parrafo(linea)
+                    continue
                 linea = str(parrafo).strip()
                 if not linea:
                     continue
@@ -556,7 +594,7 @@ def construir_pdf(carta, interpretaciones, edad_texto=None, secciones=None,
                         rotulo = f"{nombre_mes} {fecha.year}"
                         if falta:
                             rotulo += f" · {falta}"
-                        pdf.etiqueta(rotulo)
+                        pdf.rotulo_mes(rotulo)
                     aspecto = (ev.get("aspect_es" if es else "aspect_en") or "").lower()
                     natal = _nombre_planeta(ev.get("natal_planet"), es)
                     if es:
