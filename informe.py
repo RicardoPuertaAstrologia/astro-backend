@@ -34,19 +34,31 @@ NOCHE = (11, 14, 18)          # --noche
 PAPEL = (247, 245, 240)       # --papel
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
-RUTA_FUENTES = os.path.join(_AQUI, "fuentes")
-RUTA_LOGO_BLANCO = os.path.join(_AQUI, "assets", "logo-blanco.png")
-RUTA_LOGO_OSCURO = os.path.join(_AQUI, "assets", "logo-oscuro.png")
+
+
+def _buscar(nombre, *carpetas):
+    """Busca un archivo en varias carpetas y al lado del código. Así los
+    tipos de letra y los logos pueden ir en su carpeta o sueltos en la
+    raíz del repositorio: funciona de las dos maneras."""
+    for carpeta in list(carpetas) + [""]:
+        ruta = os.path.join(_AQUI, carpeta, nombre) if carpeta else os.path.join(_AQUI, nombre)
+        if os.path.exists(ruta):
+            return ruta
+    return os.path.join(_AQUI, nombre)
+
+
+RUTA_LOGO_BLANCO = _buscar("logo-blanco.png", "assets")
+RUTA_LOGO_OSCURO = _buscar("logo-oscuro.png", "assets")
 
 
 def _registrar_fuentes(pdf):
     """Carga la tipografía de la marca. Si no está, el informe se arma
     igual con las tipografías estándar: nunca se cae por esto."""
     try:
-        pdf.add_font("Cormorant", "", os.path.join(RUTA_FUENTES, "Cormorant-Regular.ttf"))
-        pdf.add_font("Cormorant", "B", os.path.join(RUTA_FUENTES, "Cormorant-SemiBold.ttf"))
-        pdf.add_font("Inter", "", os.path.join(RUTA_FUENTES, "Inter-Regular.ttf"))
-        pdf.add_font("Inter", "B", os.path.join(RUTA_FUENTES, "Inter-SemiBold.ttf"))
+        pdf.add_font("Cormorant", "", _buscar("Cormorant-Regular.ttf", "fuentes"))
+        pdf.add_font("Cormorant", "B", _buscar("Cormorant-SemiBold.ttf", "fuentes"))
+        pdf.add_font("Inter", "", _buscar("Inter-Regular.ttf", "fuentes"))
+        pdf.add_font("Inter", "B", _buscar("Inter-SemiBold.ttf", "fuentes"))
         return True
     except Exception as e:
         print("Informe: sin tipografía de marca, se usan las estándar:", e)
