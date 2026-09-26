@@ -50,6 +50,17 @@ TRM_URL = ("https://www.datos.gov.co/resource/32sa-8pi3.json"
 
 HORAS_DE_PERMISO = 6  # cuánto dura el permiso de lectura tras pagar
 
+# Códigos de cortesía: para que Ricardo entre sin pagar y para regalar
+# accesos. Se escriben en Render, separados por comas:
+#     CODIGOS_CORTESIA = MARIA-9XQ2, RICARDO-CASA, PRENSA-4KD7
+# Borrar un código de esa lista lo desactiva al instante.
+def _leer_codigos():
+    crudo = os.environ.get("CODIGOS_CORTESIA", "")
+    return {c.strip().upper() for c in crudo.split(",") if c.strip()}
+
+
+CODIGOS_CORTESIA = _leer_codigos()
+
 
 # ------------------------------------------------------------
 # TRM DEL DÍA (Superintendencia Financiera, vía Datos Abiertos)
@@ -432,6 +443,53 @@ def descargar_pdf(datos: DatosPDF):
     )
 
 
+class DatosCortesia(BaseModel):
+    codigo: str
+
+
+@router.post("/cortesia")
+def cortesia(datos: DatosCortesia):
+    """Un código de cortesía abre lo mismo que abre un pago. No hay
+    registro de quién lo usó: el control es que los códigos se cambian
+    o se borran en Render cuando ya cumplieron su encargo."""
+    codigo = (datos.codigo or "").strip().upper()
+    if not codigo or codigo not in _leer_codigos():
+        raise HTTPException(status_code=404, detail="Ese código no sirve.")
+    print(f"Cortesía: se usó el código {codigo}")
+    return {
+        "ok": True,
+        "permiso": crear_permiso(f"cortesia-{codigo}"),
+        "horas": HORAS_DE_PERMISO,
+    }
+
+
+class DatosEnvio(BaseModel):
+    permiso: str
+    correo: str
+    lang: str = "es"
+    nacimiento: dict
+    imagen: Optional[str] = None
+    secciones: Optional[list] = None
+
+
+@router.post("/cobro/enviar")
+def enviar_a_un_correo(datos: DatosEnvio):
+    """Manda el informe completo al correo que se indique. Sirve para
+    regalar una carta ya hecha: Ricardo la calcula y la envía."""
+    if not permiso_valido(datos.permiso):
+        raise HTTPException(status_code=402, detail="Este informe hace parte de la versión de pago.")
+    correo_limpio = (datos.correo or "").strip()
+    if "@" not in correo_limpio or "." not in correo_limpio.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Ese correo no parece válido.")
+
+    import correo as correo_mod
+    lang = "en" if str(datos.lang).lower().startswith("en") else "es"
+    pdf = _armar_pdf(datos.nacimiento, lang, datos.imagen, datos.secciones)
+    enviado, motivo = correo_mod.enviar_informe(
+        correo_limpio, pdf, (datos.nacimiento.get("name") or ""), lang)
+    return {"ok": True, "enviado": enviado, "motivo": "" if enviado else motivo}
+
+
 @router.get("/correo/probar")
 def probar_correo(a: str = ""):
     """Envía un correo corto de prueba. Se usa una vez, para comprobar la
@@ -473,6 +531,7 @@ def estado_cobro():
         "secreto_eventos_configurado": bool(WOMPI_EVENTS_SECRET),
         "secreto_tokens_configurado": bool(os.environ.get("SECRETO_TOKENS")),
         "textos_protegidos": PROTEGER_TEXTOS,
+        "codigos_de_cortesia": len(_leer_codigos()),
         "correo_configurado": _correo_listo(),
         "trm_disponible": trm_ok,
         "precio": p,
