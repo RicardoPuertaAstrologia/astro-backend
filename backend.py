@@ -15,7 +15,7 @@ Funcionalidades v3.0:
 - Manejo correcto de LMT y zonas horarias modernas
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
@@ -709,7 +709,6 @@ def root():
     }
 
 
-@app.post("/calculate")
 def calculate_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO):
     try:
         lang = normalizar_idioma(lang)
@@ -953,6 +952,21 @@ def calculate_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO):
 # ============================================================
 # ENDPOINTS DE INTERPRETACIONES
 # ============================================================
+@app.post("/calculate")
+def calculate_endpoint(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO,
+                       x_permiso: str = Header(default="")):
+    """Lo que ve el navegador. El gráfico y las tablas son para todo el
+    mundo; el calendario de 12 meses hace parte del informe pagado."""
+    from pagos import hay_permiso, textos_protegidos
+    datos = calculate_chart(birth, lang)
+    if textos_protegidos() and not hay_permiso(x_permiso) and isinstance(datos, dict):
+        cal = datos.get("calendar_12mo")
+        if isinstance(cal, dict):
+            datos["calendar_12mo"] = {"focus_planet": cal.get("focus_planet"),
+                                      "events": [], "protegido": True}
+    return datos
+
+
 @app.get("/interpretation/{clave}")
 def get_interpretation(clave: str, lang: str = IDIOMA_POR_DEFECTO):
     """Obtener una interpretación por clave (ej: sol_libra, luna_casa_7, aspectos_sol_luna).
@@ -986,9 +1000,14 @@ def interpretations_info(lang: str = IDIOMA_POR_DEFECTO):
 
 
 @app.post("/interpret-chart")
-def interpret_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO):
+def interpret_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO,
+                    x_permiso: str = Header(default="")):
     """Calcula la carta natal y devuelve todas las interpretaciones aplicables.
-    Parámetro opcional ?lang=es|en"""
+    Parámetro opcional ?lang=es|en
+    Estos son los textos escritos por Ricardo: hacen parte del informe
+    pagado y no salen del servidor sin un permiso válido."""
+    from pagos import exigir_permiso
+    exigir_permiso(x_permiso)
     lang = normalizar_idioma(lang)
     chart_data = calculate_chart(birth, lang)
     interpretaciones = obtener_interpretaciones_carta(chart_data['natal_chart'], lang)

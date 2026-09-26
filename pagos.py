@@ -490,6 +490,47 @@ def enviar_a_un_correo(datos: DatosEnvio):
     return {"ok": True, "enviado": enviado, "motivo": "" if enviado else motivo}
 
 
+class DatosGratis(BaseModel):
+    lang: str = "es"
+    nacimiento: dict
+    imagen: Optional[str] = None
+
+
+@router.post("/informe/gratis")
+def informe_gratis(datos: DatosGratis):
+    """El PDF de cortesía: la portada, el gráfico, las tablas y la edad
+    zodiacal. Lo arma el servidor, no el navegador, por dos razones: para
+    que se vea con la portada y la tipografía de la marca, y sobre todo
+    para que no pueda colarse nada de lo que se paga. Lo que no se le
+    pasa a esta función, no existe en ese PDF."""
+    from backend import BirthData, calculate_chart
+    import informe as informe_mod
+
+    lang = "en" if str(datos.lang).lower().startswith("en") else "es"
+    try:
+        carta = calculate_chart(BirthData(**datos.nacimiento), lang)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"No se pudo calcular la carta: {e}")
+
+    edad = _edad_zodiacal(datos.nacimiento, lang)
+    try:
+        pdf = informe_mod.construir_pdf_gratis(carta, edad, datos.imagen, lang)
+    except Exception as e:
+        print("Informe gratis: falló el PDF:", repr(e))
+        raise HTTPException(status_code=500, detail="No se pudo armar el PDF.")
+
+    nombre = (datos.nacimiento.get("name") or "carta").strip()
+    seguro = "".join(c for c in nombre if c.isalnum() or c in " -_").strip() or "carta"
+    base = "Natal chart - " if lang == "en" else "Carta natal - "
+    return Response(
+        content=bytes(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{base}{seguro}.pdf"'},
+    )
+
+
 @router.get("/correo/probar")
 def probar_correo(a: str = ""):
     """Envía un correo corto de prueba. Se usa una vez, para comprobar la

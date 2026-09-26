@@ -32,6 +32,14 @@ ORO_CLARO = (201, 169, 97)    # --oro, el dorado sobre el fondo oscuro
 ORO_OSCURO = ORO              # el mismo dorado de la marca
 NOCHE = (11, 14, 18)          # --noche
 PAPEL = (247, 245, 240)       # --papel
+VERDE = (45, 106, 58)         # --success, lo que se facilita
+VERDE_FONDO = (240, 246, 241)
+ROJO = (155, 62, 62)          # --error, lo que se dificulta
+ROJO_FONDO = (250, 242, 242)
+
+# La dirección a la que lleva el botón del PDF gratis. Si algún día cambia
+# el dominio, se cambia aquí y ya.
+DIRECCION = os.environ.get("DIRECCION_APP", "https://carta.ricardopuerta.com")
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
 
@@ -160,13 +168,35 @@ class InformePDF(FPDF):
         self.ln(4)
 
     def subtitulo(self, texto):
-        if self.get_y() > self.h - 45:
+        """El nombre de cada pieza: "Sol en Casa 5", "Júpiter", "Pareja y
+        vínculos". Grande, en la tipografía de la marca y con aire
+        arriba, que es lo que ordena la página."""
+        if self.get_y() > self.h - 48:
             self.add_page()
-        self.ln(3)
-        self.set_font(self.display, "B", 15)
+        self.ln(6)
+        self.set_font(self.display, "B", 19)
         self.set_text_color(*TINTA)
-        self.multi_cell(0, 6, _limpiar(texto), new_x="LMARGIN", new_y="NEXT")
-        self.ln(1)
+        self.multi_cell(0, 8, _limpiar(texto), new_x="LMARGIN", new_y="NEXT")
+        self.set_draw_color(*LINEA)
+        y = self.get_y() + 1.5
+        self.line(self.l_margin, y, self.l_margin + 26, y)
+        self.ln(4.5)
+
+    def subrotulo(self, texto):
+        """Los rótulos de adentro ("Lo que significa este tránsito",
+        "Los aspectos a tus planetas natales"): pequeños, en versalitas
+        y en el dorado de la marca. Es el nivel intermedio que le daba
+        aire a la lectura en pantalla."""
+        if self.get_y() > self.h - 34:
+            self.add_page()
+        self.ln(3.5)
+        self.set_font(self.sans, "B", 7.5)
+        self.set_text_color(*ORO)
+        self.set_char_spacing(1.1)
+        self.multi_cell(0, 4.5, _limpiar(texto).upper(), new_x="LMARGIN", new_y="NEXT")
+        self.set_char_spacing(0)
+        self.set_text_color(*TINTA)
+        self.ln(1.5)
 
     def etiqueta(self, texto):
         """Las mayúsculas cortas del navegador ("TU CARTA") salen como
@@ -176,6 +206,37 @@ class InformePDF(FPDF):
         self.set_text_color(*SUAVE)
         self.cell(0, 4.5, _limpiar(texto).upper(), new_x="LMARGIN", new_y="NEXT")
         self.ln(0.5)
+
+    def recuadro(self, etiqueta, texto, favorable=True):
+        """Los dos recuadros de los aspectos: lo que se facilita en verde,
+        lo que se dificulta en rojo. Igual que se ven en pantalla."""
+        color = VERDE if favorable else ROJO
+        fondo = VERDE_FONDO if favorable else ROJO_FONDO
+        ancho = self.w - self.l_margin - self.r_margin
+
+        # Se mide el alto antes de pintar, para no partir el recuadro.
+        self.set_font("Times", "", 10)
+        lineas = len(self.multi_cell(ancho - 10, 4.8, _limpiar(texto), dry_run=True,
+                                     output="LINES", new_x="LMARGIN", new_y="NEXT"))
+        alto = 9 + lineas * 4.8 + 4
+        if self.get_y() + alto > self.h - 26:
+            self.add_page()
+
+        y0 = self.get_y()
+        self.set_fill_color(*fondo)
+        self.rect(self.l_margin, y0, ancho, alto, style="F")
+        self.set_fill_color(*color)
+        self.rect(self.l_margin, y0, 1.2, alto, style="F")
+
+        self.set_xy(self.l_margin + 5, y0 + 2.5)
+        self.set_font(self.sans, "B", 7)
+        self.set_text_color(*color)
+        self.cell(ancho - 10, 4, _limpiar(etiqueta).upper(), new_x="LMARGIN", new_y="NEXT")
+        self.set_xy(self.l_margin + 5, y0 + 7.5)
+        self.set_font("Times", "", 10)
+        self.set_text_color(*TINTA)
+        self.multi_cell(ancho - 10, 4.8, _limpiar(texto), new_x="LMARGIN", new_y="NEXT")
+        self.set_y(y0 + alto + 2)
 
     def renglon(self, texto):
         """Una línea de lista, apretada: el calendario es una agenda,
@@ -198,6 +259,36 @@ class InformePDF(FPDF):
         self.multi_cell(0, 5.4, _limpiar(texto), new_x="LMARGIN", new_y="NEXT")
         self.set_text_color(*TINTA)
         self.ln(0.5)
+
+    def pastilla(self, texto, url):
+        """Un botón redondeado, dorado sobre fondo oscuro, que se puede
+        pulsar dentro del PDF y abre la página de la carta."""
+        limpio = _limpiar(texto)
+        self.set_font(self.sans, "B", 11)
+        ancho = self.get_string_width(limpio) + 24
+        alto = 13.5
+        if self.get_y() + alto > self.h - self.b_margin:
+            self.add_page()
+        x, y = self.l_margin, self.get_y()
+        self.set_fill_color(*NOCHE)
+        self.rect(x, y, ancho, alto, style="F", round_corners=True, corner_radius=6.5)
+        self.set_text_color(*ORO_CLARO)
+        self.set_xy(x, y)
+        self.cell(ancho, alto, limpio, align="C")
+        self.link(x, y, ancho, alto, url)
+        self.set_xy(self.l_margin, y + alto)
+        self.set_text_color(*TINTA)
+
+    def enlace(self, texto, url):
+        """La dirección escrita, también pulsable, debajo del botón."""
+        limpio = _limpiar(texto)
+        self.set_font(self.sans, "B", 9)
+        self.set_text_color(*ORO)
+        x, y = self.l_margin, self.get_y()
+        ancho = self.get_string_width(limpio)
+        self.cell(0, 6, limpio, new_x="LMARGIN", new_y="NEXT")
+        self.link(x, y, ancho, 6, url)
+        self.set_text_color(*TINTA)
 
     def rotulo_mes(self, texto):
         """El mes, con su raya: es lo que la persona busca al hojear."""
@@ -498,6 +589,15 @@ def _INDICE_VACIO(es):
     return [(t, None) for t in titulos]
 
 
+def construir_pdf_gratis(carta, edad_texto=None, imagen_png=None, lang="es"):
+    """El informe de cortesía: la portada, el gráfico, las tablas de la
+    carta y la edad zodiacal que la persona está viviendo. Nada de lo
+    que se paga entra acá, porque sencillamente no se le pasa."""
+    datos, _ = _armar(carta, None, edad_texto, None, imagen_png, lang,
+                      calendario=None, indice=None, solo_gratis=True)
+    return datos
+
+
 def construir_pdf(carta, interpretaciones, edad_texto=None, secciones=None,
                   imagen_png=None, lang="es", calendario=None):
     """Se arma dos veces: la primera para saber en qué página queda cada
@@ -509,8 +609,47 @@ def construir_pdf(carta, interpretaciones, edad_texto=None, secciones=None,
     return datos
 
 
+def _pintar_indice(pdf, es, indice):
+    """La segunda página: qué trae el informe y en qué página está cada
+    cosa. Los números salen de la primera pasada."""
+    pdf.titulo_seccion("Índice" if es else "Contents")
+    pdf.ln(3)
+    pdf.set_font(pdf.display, "B", 27)
+    pdf.set_text_color(*TINTA)
+    pdf.cell(0, 13, _limpiar("Lo que vas a encontrar" if es else "What you will find"),
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    pdf.set_font(pdf.sans, "", 9.5)
+    pdf.set_text_color(*SUAVE)
+    pdf.multi_cell(0, 5.2, _limpiar(
+        "Este informe se lee con calma. No hace falta seguirlo en orden: "
+        "puedes entrar por donde te llame."
+        if es else
+        "This report is meant to be read slowly. You don't have to follow it "
+        "in order: start wherever it calls you."),
+        new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(6)
+
+    for titulo, pagina in (indice or _INDICE_VACIO(es)):
+        y = pdf.get_y()
+        if y > pdf.h - 40:
+            break
+        pdf.set_font(pdf.display, "", 13)
+        pdf.set_text_color(*TINTA)
+        pdf.cell(0, 8, _limpiar(titulo), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_draw_color(*LINEA)
+        pdf.line(pdf.l_margin, y + 7.6, pdf.w - pdf.r_margin, y + 7.6)
+        if pagina:
+            pdf.set_xy(pdf.w - pdf.r_margin - 16, y)
+            pdf.set_font(pdf.sans, "B", 9)
+            pdf.set_text_color(*ORO)
+            pdf.cell(16, 8, str(pagina), align="R", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1.5)
+
+
 def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
-           imagen_png=None, lang="es", calendario=None, indice=None):
+           imagen_png=None, lang="es", calendario=None, indice=None,
+           solo_gratis=False):
     """carta: lo que devuelve /calculate (birth_data + natal_chart)
        interpretaciones: lista de {titulo, texto} del servidor
        edad_texto: dict con la edad zodiacal de la persona (o None)
@@ -557,9 +696,12 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
     pdf.set_font(pdf.sans, "B", 7.5)
     pdf.set_text_color(*ORO)
     pdf.set_char_spacing(2.4)
-    pdf.cell(0, 5, _limpiar("INFORME COMPLETO DE TU CARTA NATAL" if es
-                            else "COMPLETE REPORT OF YOUR NATAL CHART"),
-             align="C", new_x="LMARGIN", new_y="NEXT")
+    if solo_gratis:
+        rotulo_portada = "TU CARTA NATAL" if es else "YOUR NATAL CHART"
+    else:
+        rotulo_portada = ("INFORME COMPLETO DE TU CARTA NATAL" if es
+                          else "COMPLETE REPORT OF YOUR NATAL CHART")
+    pdf.cell(0, 5, _limpiar(rotulo_portada), align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.set_char_spacing(0)
 
     titular = _limpiar(_nombre_bonito(nombre))
@@ -651,40 +793,12 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
 
     # ---------- ÍNDICE ----------
     pdf.set_auto_page_break(auto=True, margin=22)
-    pdf.add_page()
-    pdf.titulo_seccion("Índice" if es else "Contents")
-    pdf.ln(3)
-    pdf.set_font(pdf.display, "B", 27)
-    pdf.set_text_color(*TINTA)
-    pdf.cell(0, 13, _limpiar("Lo que vas a encontrar" if es else "What you will find"),
-             new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
-    pdf.set_font(pdf.sans, "", 9.5)
-    pdf.set_text_color(*SUAVE)
-    pdf.multi_cell(0, 5.2, _limpiar(
-        "Este informe se lee con calma. No hace falta seguirlo en orden: "
-        "puedes entrar por donde te llame."
-        if es else
-        "This report is meant to be read slowly. You don't have to follow it "
-        "in order: start wherever it calls you."),
-        new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(6)
-    for titulo, pagina in (indice or _INDICE_VACIO(es)):
-        y = pdf.get_y()
-        if y > pdf.h - 40:
-            break
-        pdf.set_font(pdf.display, "", 13)
-        pdf.set_text_color(*TINTA)
-        pdf.cell(0, 8, _limpiar(titulo), new_x="LMARGIN", new_y="NEXT")
-        # La rayita de puntos y el número, a la derecha.
-        pdf.set_draw_color(*LINEA)
-        pdf.line(pdf.l_margin, y + 7.6, pdf.w - pdf.r_margin, y + 7.6)
-        if pagina:
-            pdf.set_xy(pdf.w - pdf.r_margin - 16, y)
-            pdf.set_font(pdf.sans, "B", 9)
-            pdf.set_text_color(*ORO_OSCURO)
-            pdf.cell(16, 8, str(pagina), align="R", new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(1.5)
+    if solo_gratis:
+        pdf.paginas_sin_numero = 1      # sin índice, la portada es la única sin número
+    else:
+        pdf.add_page()
+    if not solo_gratis:
+        _pintar_indice(pdf, es, indice)
 
     # ---------- EL GRÁFICO ----------
     if imagen_png:
@@ -789,7 +903,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
                   filas_c, [20, 45, 45, 62])
 
     # ---------- LECTURA DE LA CARTA NATAL ----------
-    interpretaciones = ordenar_interpretaciones(interpretaciones, es)
+    interpretaciones = [] if solo_gratis else ordenar_interpretaciones(interpretaciones, es)
     if interpretaciones:
         pdf.add_page()
         pdf.titulo_seccion("Tu carta natal, leída" if es else "Your natal chart, read", en_indice=True)
@@ -800,7 +914,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
                     pdf.parrafo(parrafo.strip())
 
     # ---------- SECCIONES DEL NAVEGADOR ----------
-    for sec in (secciones or []):
+    for sec in ([] if solo_gratis else (secciones or [])):
         bloques = sec.get("bloques") or []
         if not bloques:
             continue
@@ -816,8 +930,18 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
                     linea = str(parrafo.get("v", "")).strip()
                     if not linea:
                         continue
-                    if parrafo.get("t") == "aspecto":
+                    tipo = parrafo.get("t")
+                    if tipo == "aspecto":
                         pdf.destacado(linea)
+                    elif tipo == "rotulo":
+                        pdf.subrotulo(linea)
+                    elif tipo in ("facilita", "dificulta"):
+                        if tipo == "facilita":
+                            etiqueta = "Lo que se facilita" if es else "What is facilitated"
+                        else:
+                            etiqueta = "Lo que se dificulta" if es else "What is challenged"
+                        etiqueta = parrafo.get("etiqueta") or etiqueta
+                        pdf.recuadro(etiqueta, linea, favorable=(tipo == "facilita"))
                     else:
                         pdf.parrafo(linea)
                     continue
@@ -833,7 +957,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
     # Se arma con los datos, no copiando el texto de la pantalla: en
     # pantalla solo se ve el planeta que la persona tenga señalado, y
     # cada evento queda partido en renglones sueltos.
-    if calendario:
+    if calendario and not solo_gratis:
         hay = [c for c in calendario if c.get("eventos")]
         if hay:
             pdf.add_page()
@@ -895,6 +1019,67 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
                 pdf.parrafo(valor, cursiva=(clave == "spoiler"))
 
     # ---------- CIERRE ----------
+    if solo_gratis:
+        pdf.add_page()
+        pdf.titulo_seccion("Tu carta completa" if es else "Your complete chart")
+        pdf.ln(2)
+        pdf.set_font(pdf.display, "B", 25)
+        pdf.set_text_color(*TINTA)
+        pdf.multi_cell(0, 11, _limpiar(
+            "Si quieres conocer tu carta natal completa"
+            if es else
+            "If you want to know your complete natal chart"),
+            new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(4)
+        pdf.parrafo(
+            "Lo que tienes en estas páginas es el mapa: dónde estaba cada planeta "
+            "el día que naciste, en qué casa, con qué aspectos. El informe completo "
+            "es la lectura de ese mapa, escrita por mí, texto por texto."
+            if es else
+            "What you have in these pages is the map: where each planet stood the "
+            "day you were born, in which house, with which aspects. The complete "
+            "report is the reading of that map, written by me, text by text.")
+        pdf.ln(3)
+        for linea in ((
+            "**Tu carta natal, leída.** Cada planeta en su signo y su casa, los nodos, "
+            "la Fortuna y los aspectos entre tus planetas.",
+            "**Los tránsitos de los planetas lentos.** Júpiter, Saturno, Urano, Neptuno, "
+            "Plutón, Quirón y Lilith, uno por uno, sobre tu carta.",
+            "**Tu calendario de doce meses.** Las fechas en que cada planeta lento toca "
+            "un punto de tu carta.",
+            "**Tus áreas de vida activadas.** Qué se está moviendo hoy y dónde.",
+            "**Las 23 edades zodiacales.** Las que ya viviste y las que vienen.",
+        ) if es else (
+            "**Your natal chart, read.** Each planet in its sign and house, the nodes, "
+            "the Part of Fortune and the aspects between your planets.",
+            "**The transits of the slow planets.** Jupiter, Saturn, Uranus, Neptune, "
+            "Pluto, Chiron and Lilith, one by one, over your chart.",
+            "**Your twelve-month calendar.** The dates when each slow planet touches "
+            "a point of your chart.",
+            "**Your activated life areas.** What is moving today, and where.",
+            "**The 23 zodiacal ages.** The ones you have lived and the ones to come.",
+        )):
+            pdf.parrafo("· " + linea)
+        pdf.ln(5)
+        pdf.pastilla(
+            "Quiero mi carta natal completa  »" if es else
+            "I want my complete natal chart  »",
+            DIRECCION)
+        pdf.ln(3)
+        pdf.enlace("carta.ricardopuerta.com", DIRECCION)
+        pdf.ln(6)
+        pdf.set_font(pdf.sans, "", 8.5)
+        pdf.set_text_color(*SUAVE)
+        pdf.multi_cell(0, 4.6, _limpiar(
+            "Ricardo Puerta Isaza · arquitecto & astrólogo\n"
+            "Cálculos con Swiss Ephemeris, validados contra Solar Fire v9.1.0."
+            if es else
+            "Ricardo Puerta Isaza · architect & astrologer\n"
+            "Calculations with Swiss Ephemeris, validated against Solar Fire v9.1.0."),
+            new_x="LMARGIN", new_y="NEXT")
+        salida = pdf.output()
+        return bytes(salida), pdf.indice
+
     pdf.add_page()
     pdf.titulo_seccion("Sobre este informe" if es else "About this report", en_indice=True)
     pdf.parrafo(
