@@ -283,6 +283,16 @@ TRANSITABLE_BODIES = {**PLANETS, **ADDITIONAL_BODIES}
 # Slow planets used for transits
 TRANSIT_PLANETS = ['jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'chiron', 'lilith']
 
+# Planetas que NO entran en el calendario de 12 meses.
+# Lilith aquí es la Lilith Verdadera (el apogeo lunar oscilante). Oscila
+# adelante y atrás cada pocas semanas, así que cruza el MISMO aspecto al
+# MISMO punto natal trece o quince veces en un año. No son trece eventos
+# distintos: es el mismo, temblando. En una carta de prueba salían 261
+# fechas de Lilith frente a 13 de Júpiter, y el calendario se volvía
+# ilegible. Lilith sigue estando en todo lo demás: su signo, su casa, su
+# lectura y los aspectos que hace hoy.
+SIN_CALENDARIO = {'lilith'}
+
 ASPECT_TYPES = [
     {'name_es':'Conjunción', 'name_en':'Conjunction', 'angle':0,   'orb_natal':8.0, 'orb_transit':2.0, 'glyph':'☌', 'nature':'major'},
     {'name_es':'Sextil',     'name_en':'Sextile',     'angle':60,  'orb_natal':4.0, 'orb_transit':1.5, 'glyph':'⚹', 'nature':'major'},
@@ -580,6 +590,31 @@ def calculate_natal_aspects(planets):
 # ============================================================
 # EXACT TRANSIT DATES (búsqueda iterativa)
 # ============================================================
+# ------------------------------------------------------------
+# MEMORIA DE POSICIONES
+# ------------------------------------------------------------
+# El calendario de 12 meses pregunta "¿dónde está este planeta?" una y
+# otra vez en las MISMAS fechas: la rejilla de muestreo es idéntica para
+# cada punto natal y para cada aspecto. Con 17 puntos natales y 5
+# aspectos por dos lados, la misma pregunta se repetía unas 170 veces.
+#
+# Guardando la respuesta, cada fecha se calcula UNA sola vez. El
+# resultado es exactamente el mismo; lo único que cambia es el tiempo.
+_POSICIONES = {}
+
+def _longitud_en(planet_id, jd):
+    clave = (planet_id, jd)
+    v = _POSICIONES.get(clave)
+    if v is None:
+        # Tope de memoria: el plan de Render tiene 512 MB y esto vive en
+        # el mismo proceso. 60.000 entradas son unos pocos MB.
+        if len(_POSICIONES) > 60000:
+            _POSICIONES.clear()
+        v = swe.calc_ut(jd, planet_id, swe.FLG_SWIEPH | swe.FLG_SPEED)[0][0]
+        _POSICIONES[clave] = v
+    return v
+
+
 def find_exact_aspect_dates(planet_id, natal_lon, target_angle, jd_start, jd_end, max_iter=100):
     """
     Encuentra las fechas (JD) en que un planeta hace exactamente el aspecto
@@ -592,8 +627,7 @@ def find_exact_aspect_dates(planet_id, natal_lon, target_angle, jd_start, jd_end
     """
     def angular_residual(jd):
         """Retorna diferencia signed entre el aspecto observado y el target_angle (-180 a 180)."""
-        pos = swe.calc_ut(jd, planet_id, swe.FLG_SWIEPH | swe.FLG_SPEED)[0]
-        diff = (pos[0] - natal_lon - target_angle) % 360
+        diff = (_longitud_en(planet_id, jd) - natal_lon - target_angle) % 360
         if diff > 180:
             diff -= 360
         return diff
@@ -629,7 +663,7 @@ def find_exact_aspect_dates(planet_id, natal_lon, target_angle, jd_start, jd_end
                 else:
                     lo = mid
                     val_a = val_mid
-                if abs(hi - lo) < 1e-6:
+                if abs(hi - lo) < 1e-4:   # 8 segundos de precisión; se muestra la fecha
                     break
             crossings.append((lo + hi) / 2)
 
@@ -837,9 +871,25 @@ def calculate_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO):
         jd_end = jd_now + 365  # 12 meses
         focus_planet_id = TRANSITABLE_BODIES[focus_planet]
 
+        nota_calendario = None
+        if focus_planet in SIN_CALENDARIO:
+            # Ver SIN_CALENDARIO arriba: sus fechas serían el mismo aspecto
+            # repetido una y otra vez, y además cuestan tiempo de calcular.
+            natal_para_calendario = {}
+            nota_calendario = (
+                "Lilith no lleva calendario de doce meses: oscila adelante y atrás "
+                "cada pocas semanas, y el mismo aspecto se repetiría una docena de "
+                "veces. Sus tránsitos de hoy sí están, arriba."
+                if lang != "en" else
+                "Lilith has no twelve-month calendar: she oscillates back and forth "
+                "every few weeks, so the same aspect would repeat a dozen times. "
+                "Her transits for today are above.")
+        else:
+            natal_para_calendario = natal_full
+
         focus_calendar = []
-        for natal_name in natal_full:
-            natal_lon = natal_full[natal_name]['longitude']
+        for natal_name in natal_para_calendario:
+            natal_lon = natal_para_calendario[natal_name]['longitude']
             for asp in ASPECT_TYPES:
                 targets = [asp['angle']] if asp['angle'] in (0, 180) else [asp['angle'], -asp['angle']]
                 for tgt in targets:
@@ -940,7 +990,8 @@ def calculate_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO):
             },
             'calendar_12mo': {
                 'focus_planet': focus_planet,
-                'events': deduped_cal
+                'events': deduped_cal,
+                'nota': nota_calendario
             }
         }
 
@@ -963,7 +1014,10 @@ def calculate_endpoint(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO,
         cal = datos.get("calendar_12mo")
         if isinstance(cal, dict):
             datos["calendar_12mo"] = {"focus_planet": cal.get("focus_planet"),
-                                      "events": [], "protegido": True}
+                                      "events": [], "protegido": True,
+                                      # la nota explica por qué un planeta no
+                                      # lleva calendario; no es contenido de pago
+                                      "nota": cal.get("nota")}
     return datos
 
 

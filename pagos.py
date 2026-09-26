@@ -382,9 +382,54 @@ class DatosPDF(BaseModel):
     secciones: Optional[list] = None
 
 
+# ------------------------------------------------------------
+# EL INFORME RECIÉN ARMADO SE GUARDA UN RATO
+# ------------------------------------------------------------
+# Al volver de Wompi pasan dos cosas seguidas: el servidor arma el PDF
+# para mandarlo por correo, y al ratito la persona le da a "descargar" y
+# el servidor lo arma OTRA VEZ, idéntico. En el plan pequeño de Render,
+# que da una décima de procesador, esos dos trabajos se pisan y los dos
+# van lentos.
+#
+# Guardando el último rato lo que ya se armó, el segundo pedido es
+# instantáneo. Se guardan pocos y por poco tiempo: cada informe pesa algo
+# más de medio mega y el servidor tiene 512 MB.
+_INFORMES = {}          # huella -> (momento, bytes)
+_INFORMES_VIDA = 900    # 15 minutos
+_INFORMES_CUANTOS = 4
+
+
+def _huella_informe(nacimiento_dict, lang, imagen, secciones):
+    crudo = json.dumps([nacimiento_dict, lang, secciones], sort_keys=True, default=str)
+    if imagen:
+        crudo += hashlib.sha256(imagen.encode("utf-8", "ignore")).hexdigest()
+    return hashlib.sha256(crudo.encode("utf-8", "ignore")).hexdigest()
+
+
+def _informe_guardado(huella):
+    ahora = time.time()
+    for k in [k for k, (t, _) in _INFORMES.items() if ahora - t > _INFORMES_VIDA]:
+        _INFORMES.pop(k, None)
+    guardado = _INFORMES.get(huella)
+    return guardado[1] if guardado else None
+
+
+def _guardar_informe(huella, datos):
+    if len(_INFORMES) >= _INFORMES_CUANTOS:
+        mas_viejo = min(_INFORMES, key=lambda k: _INFORMES[k][0])
+        _INFORMES.pop(mas_viejo, None)
+    _INFORMES[huella] = (time.time(), datos)
+
+
 def _armar_pdf(nacimiento_dict, lang, imagen, secciones):
     """Arma el PDF completo. Lo usan el correo y la descarga, para que
-    la persona reciba exactamente el mismo documento por los dos lados."""
+    la persona reciba exactamente el mismo documento por los dos lados.
+    Si ya se armó ese mismo informe hace poco, se devuelve tal cual."""
+    huella = _huella_informe(nacimiento_dict, lang, imagen, secciones)
+    ya_esta = _informe_guardado(huella)
+    if ya_esta is not None:
+        print("Informe: se reusa el que se armó hace un momento")
+        return ya_esta
     from backend import BirthData, calculate_chart, obtener_interpretaciones_carta
     import informe as informe_mod
 
@@ -416,9 +461,11 @@ def _armar_pdf(nacimiento_dict, lang, imagen, secciones):
         print("Informe: no se pudo armar el calendario completo:", repr(e))
 
     try:
-        return informe_mod.construir_pdf(carta, interpretaciones, edad,
-                                         secciones or [], imagen, lang,
-                                         calendario=calendario)
+        pdf = informe_mod.construir_pdf(carta, interpretaciones, edad,
+                                        secciones or [], imagen, lang,
+                                        calendario=calendario)
+        _guardar_informe(huella, pdf)
+        return pdf
     except Exception as e:
         print("Informe: falló el PDF:", repr(e))
         raise HTTPException(status_code=500, detail="No se pudo armar el informe en PDF.")

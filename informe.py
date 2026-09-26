@@ -600,13 +600,28 @@ def construir_pdf_gratis(carta, edad_texto=None, imagen_png=None, lang="es"):
 
 def construir_pdf(carta, interpretaciones, edad_texto=None, secciones=None,
                   imagen_png=None, lang="es", calendario=None):
-    """Se arma dos veces: la primera para saber en qué página queda cada
-    sección, la segunda para escribir el índice con esos números."""
-    _, paginas = _armar(carta, interpretaciones, edad_texto, secciones,
-                        imagen_png, lang, calendario, indice=None)
+    """Se arma UNA sola vez. La hoja del índice se deja en blanco al
+    principio y se escribe al final, cuando ya se sabe en qué página quedó
+    cada sección."""
     datos, _ = _armar(carta, interpretaciones, edad_texto, secciones,
-                      imagen_png, lang, calendario, indice=paginas)
+                      imagen_png, lang, calendario)
     return datos
+
+
+def _volver_y_pintar_indice(pdf, es, numero_de_hoja):
+    """Vuelve a la hoja que se dejó en blanco al principio y escribe ahí el
+    índice, ya con los números de página de verdad. Al terminar deja el
+    documento como estaba, en la última hoja."""
+    ultima = pdf.page
+    try:
+        pdf.page = numero_de_hoja
+        pdf.set_auto_page_break(auto=False)     # el índice cabe en su hoja
+        pdf.set_xy(pdf.l_margin, pdf.t_margin)
+        pdf.portada = False
+        _pintar_indice(pdf, es, pdf.indice)
+    finally:
+        pdf.page = ultima
+        pdf.set_auto_page_break(auto=True, margin=22)
 
 
 def _pintar_indice(pdf, es, indice):
@@ -793,12 +808,17 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
 
     # ---------- ÍNDICE ----------
     pdf.set_auto_page_break(auto=True, margin=22)
+    pagina_indice = None
     if solo_gratis:
         pdf.paginas_sin_numero = 1      # sin índice, la portada es la única sin número
     else:
+        # Se reserva la hoja del índice y se deja en blanco: sus números
+        # todavía no se saben. Se vuelve a ella al final, cuando ya está
+        # armado el resto. Antes el informe se construía DOS VECES enteras
+        # solo para averiguar esos números, y eso costaba el doble de
+        # tiempo en un servidor pequeño.
         pdf.add_page()
-    if not solo_gratis:
-        _pintar_indice(pdf, es, indice)
+        pagina_indice = pdf.page
 
     # ---------- EL GRÁFICO ----------
     if imagen_png:
@@ -1077,6 +1097,8 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
             "Ricardo Puerta Isaza · architect & astrologer\n"
             "Calculations with Swiss Ephemeris, validated against Solar Fire v9.1.0."),
             new_x="LMARGIN", new_y="NEXT")
+        if pagina_indice is not None:
+            _volver_y_pintar_indice(pdf, es, pagina_indice)
         salida = pdf.output()
         return bytes(salida), pdf.indice
 
@@ -1096,5 +1118,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
     pdf.parrafo("Ricardo Puerta Isaza · " + ("arquitecto & astrólogo" if es else "architect & astrologer"))
     pdf.parrafo("ricardopuerta.com · carta.ricardopuerta.com")
 
+    if pagina_indice is not None:
+        _volver_y_pintar_indice(pdf, es, pagina_indice)
     salida = pdf.output()
     return bytes(salida), pdf.indice
