@@ -133,7 +133,7 @@ PARRAFOS_ES = [
 ]
 
 PARRAFOS_EN = [
-    "First of all, thank you for choosing this complete and detailed report "
+    "First of all, thank you for choosing this full and detailed report "
     "of your **natal chart**.",
 
     "In this PDF you will find the graphic of your chart, the data of all your "
@@ -170,7 +170,7 @@ TEXTOS = {
         "adjunto": "Tu informe va adjunto a este correo, en PDF.",
     },
     "en": {
-        "asunto": "Your complete natal chart · Ricardo Puerta Isaza",
+        "asunto": "Your full natal chart · Ricardo Puerta Isaza",
         "saludo": "Hello{nombre},",
         "parrafos": PARRAFOS_EN,
         "boton": "Book a consultation",

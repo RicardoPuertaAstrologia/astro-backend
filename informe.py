@@ -700,7 +700,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
         rotulo_portada = "TU CARTA NATAL" if es else "YOUR NATAL CHART"
     else:
         rotulo_portada = ("INFORME COMPLETO DE TU CARTA NATAL" if es
-                          else "COMPLETE REPORT OF YOUR NATAL CHART")
+                          else "FULL REPORT OF YOUR NATAL CHART")
     pdf.cell(0, 5, _limpiar(rotulo_portada), align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.set_char_spacing(0)
 
@@ -1021,14 +1021,14 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
     # ---------- CIERRE ----------
     if solo_gratis:
         pdf.add_page()
-        pdf.titulo_seccion("Tu carta completa" if es else "Your complete chart")
+        pdf.titulo_seccion("Tu carta completa" if es else "Your full chart")
         pdf.ln(2)
         pdf.set_font(pdf.display, "B", 25)
         pdf.set_text_color(*TINTA)
         pdf.multi_cell(0, 11, _limpiar(
             "Si quieres conocer tu carta natal completa"
             if es else
-            "If you want to know your complete natal chart"),
+            "If you want to know your full natal chart"),
             new_x="LMARGIN", new_y="NEXT")
         pdf.ln(4)
         pdf.parrafo(
@@ -1037,7 +1037,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
             "es la lectura de ese mapa, escrita por mí, texto por texto."
             if es else
             "What you have in these pages is the map: where each planet stood the "
-            "day you were born, in which house, with which aspects. The complete "
+            "day you were born, in which house, with which aspects. The full "
             "report is the reading of that map, written by me, text by text.")
         pdf.ln(3)
         for linea in ((
@@ -1063,7 +1063,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
         pdf.ln(5)
         pdf.pastilla(
             "Quiero mi carta natal completa  »" if es else
-            "I want my complete natal chart  »",
+            "I want my full natal chart  »",
             DIRECCION)
         pdf.ln(3)
         pdf.enlace("carta.ricardopuerta.com", DIRECCION)
