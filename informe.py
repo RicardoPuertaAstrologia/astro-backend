@@ -372,10 +372,17 @@ def _nombre_planeta(clave, es):
     return str(clave).capitalize()
 
 
+# Las claves internas de los signos vienen sin tilde (cancer, geminis),
+# porque sirven de índice. Al escribirlas para la persona hay que
+# devolverles la tilde: el informe decía «Sol en Cancer» y «Venus en
+# Geminis», que es un error de ortografía en un producto que se vende.
+_CON_TILDE = {"Cancer": "Cáncer", "Geminis": "Géminis"}
+
+
 def _signo(nombre, es):
     n = str(nombre).capitalize()
     if es:
-        return n
+        return _CON_TILDE.get(n, n)
     tabla = {"Aries": "Aries", "Tauro": "Taurus", "Geminis": "Gemini", "Géminis": "Gemini",
              "Cancer": "Cancer", "Cáncer": "Cancer", "Leo": "Leo", "Virgo": "Virgo",
              "Libra": "Libra", "Escorpio": "Scorpio", "Sagitario": "Sagittarius",
