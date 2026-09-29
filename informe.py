@@ -906,7 +906,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
             dig = p["dignity"].get("es" if es else "en", "")
         filas.append([es_n if es else en_n, p.get("formatted", ""),
                       str(p.get("house", "")), ("R " if p.get("retrograde") else "") + dig])
-    pdf.tabla(["Planeta" if es else "Planet",
+    pdf.tabla(["Punto" if es else "Point",
                "Posición" if es else "Position",
                "Casa" if es else "House",
                "Estado" if es else "Status"],
@@ -1070,8 +1070,8 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
         for linea in ((
             "**Tu carta natal, leída.** Cada planeta en su signo y su casa, los nodos, "
             "la Fortuna y los aspectos entre tus planetas.",
-            "**Los tránsitos de los planetas lentos.** Júpiter, Saturno, Urano, Neptuno, "
-            "Plutón, Quirón y Lilith, uno por uno, sobre tu carta.",
+            "**Los tránsitos lentos.** Júpiter, Saturno, Urano, Neptuno y Plutón, "
+            "más Quirón y Lilith, uno por uno, sobre tu carta.",
             "**Tu calendario de doce meses.** Las fechas en que cada planeta lento toca "
             "un punto de tu carta.",
             "**Tus áreas de vida activadas.** Qué se está moviendo hoy y dónde.",
@@ -1079,8 +1079,8 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
         ) if es else (
             "**Your natal chart, read.** Each planet in its sign and house, the nodes, "
             "the Part of Fortune and the aspects between your planets.",
-            "**The transits of the slow planets.** Jupiter, Saturn, Uranus, Neptune, "
-            "Pluto, Chiron and Lilith, one by one, over your chart.",
+            "**The slow transits.** Jupiter, Saturn, Uranus, Neptune and Pluto, "
+            "plus Chiron and Lilith, one by one, over your chart.",
             "**Your twelve-month calendar.** The dates when each slow planet touches "
             "a point of your chart.",
             "**Your activated life areas.** What is moving today, and where.",
