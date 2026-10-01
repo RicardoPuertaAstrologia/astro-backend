@@ -395,7 +395,7 @@ def format_position(longitude, lang='es'):
     deg = int(deg_in_sign)
     minutes_full = (deg_in_sign - deg) * 60
     min_int = int(minutes_full)
-    sec = int(round((minutes_full - min_int) * 60))
+    sec = int((minutes_full - min_int) * 60)
     if sec == 60:
         sec = 0
         min_int += 1
@@ -409,7 +409,7 @@ def format_position(longitude, lang='es'):
         'degree': deg,
         'minute': min_int,
         'second': sec,
-        'formatted': f"{deg}° {signs[sign_idx]} {min_int:02d}'{sec:02d}\""
+        'formatted': f"{deg}° {signs[sign_idx]} {min_int:02d}'"
     }
 
 
