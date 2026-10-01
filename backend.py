@@ -429,7 +429,9 @@ def calc_planet(jd, planet_id):
 
 
 def calc_houses_placidus(jd, lat, lon):
-    cusps, ascmc = swe.houses(jd, lat, lon, b'P')
+    eps_media = swe.calc_ut(jd, swe.ECL_NUT)[0][1]
+    armc = (swe.sidtime0(jd, eps_media, 0.0) * 15.0 + lon) % 360.0
+    cusps, ascmc = swe.houses_armc(armc, lat, eps_media, b'P')
     return {
         'cusps': list(cusps),
         'asc': ascmc[0],
