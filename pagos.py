@@ -26,6 +26,24 @@ router = APIRouter()
 # CONFIGURACIÓN
 # ------------------------------------------------------------
 PRECIO_USD = float(os.environ.get("PRECIO_INFORME_USD", "24.99"))
+PRECIO_MAPA_USD = float(os.environ.get("PRECIO_MAPA_USD", "20.99"))
+
+# Los dos productos que se venden. La sigla es la que abre la
+# referencia del pago, y es la que después dice qué compró la persona:
+# RP-20261002-a1b2c3 es el informe, RPM-20261002-a1b2c3 es el mapa.
+PRODUCTOS = {
+    "informe": {"usd": PRECIO_USD, "sigla": "RP"},
+    "mapa": {"usd": PRECIO_MAPA_USD, "sigla": "RPM"},
+}
+
+
+def producto_de(referencia):
+    """De la referencia se deduce qué se compró. Como la referencia va
+    dentro de la firma del permiso, nadie puede cambiarla por fuera."""
+    r = str(referencia or "").upper()
+    if r.startswith("CORTESIA-"):
+        return "todo"          # tus códigos abren las dos cosas
+    return "mapa" if r.startswith("RPM-") else "informe"
 
 WOMPI_PUBLIC_KEY = os.environ.get("WOMPI_PUBLIC_KEY", "")
 WOMPI_INTEGRITY_SECRET = os.environ.get("WOMPI_INTEGRITY_SECRET", "")
@@ -97,11 +115,13 @@ def obtener_trm():
                         detail="No se pudo obtener la TRM del día. Intenta de nuevo en unos minutos.")
 
 
-def precio_del_dia():
+def precio_del_dia(producto="informe"):
+    p = PRODUCTOS.get(producto) or PRODUCTOS["informe"]
     trm, fecha_trm = obtener_trm()
-    cop = round(PRECIO_USD * trm)          # pesos enteros
+    cop = round(p["usd"] * trm)            # pesos enteros
     return {
-        "usd": PRECIO_USD,
+        "producto": producto,
+        "usd": p["usd"],
         "cop": cop,
         "cop_en_centavos": cop * 100,       # Wompi cobra en centavos
         "trm": trm,
@@ -111,9 +131,11 @@ def precio_del_dia():
 
 
 @router.get("/precio")
-def endpoint_precio():
-    """Precio del informe, en dólares y en pesos con la TRM de hoy."""
-    return precio_del_dia()
+def endpoint_precio(producto: str = "informe"):
+    """Precio del producto, en dólares y en pesos con la TRM de hoy.
+    Se pide así:  /precio          -> el informe
+                  /precio?producto=mapa  -> el mapa"""
+    return precio_del_dia(producto)
 
 
 # ------------------------------------------------------------
@@ -126,14 +148,20 @@ def crear_permiso(referencia, minutos=HORAS_DE_PERMISO * 60):
     return f"{cuerpo}.{firma}"
 
 
-def permiso_valido(permiso):
+def permiso_valido(permiso, producto="informe"):
+    """Además de comprobar la firma y que no esté vencido, mira que el
+    permiso sea del producto que se está pidiendo. El producto se saca
+    de la referencia, que va dentro de la firma: no se puede falsear."""
     try:
         referencia, vence, firma = str(permiso).split(".")
         cuerpo = f"{referencia}.{vence}"
         esperada = hmac.new(SECRETO_TOKENS.encode(), cuerpo.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(firma, esperada):
             return False
-        return int(vence) > int(time.time())
+        if int(vence) <= int(time.time()):
+            return False
+        suyo = producto_de(referencia)
+        return suyo == "todo" or suyo == producto
     except Exception:
         return False
 
@@ -142,7 +170,7 @@ def permiso_valido(permiso):
 # CREAR EL COBRO
 # ------------------------------------------------------------
 @router.post("/cobro/crear")
-def crear_cobro():
+def crear_cobro(producto: str = "informe"):
     """Devuelve todo lo que el navegador necesita para abrir el checkout
     de Wompi: referencia única, monto en centavos y firma de integridad.
     La firma se hace acá, en el servidor, porque usa un secreto."""
@@ -150,8 +178,9 @@ def crear_cobro():
         raise HTTPException(status_code=503,
                             detail="El cobro no está configurado en el servidor.")
 
-    p = precio_del_dia()
-    referencia = "RP-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + secrets.token_hex(6)
+    p = precio_del_dia(producto)
+    sigla = (PRODUCTOS.get(producto) or PRODUCTOS["informe"])["sigla"]
+    referencia = sigla + "-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + secrets.token_hex(6)
     monto = p["cop_en_centavos"]
     moneda = "COP"
 
@@ -166,6 +195,7 @@ def crear_cobro():
         "llave_publica": WOMPI_PUBLIC_KEY,
         "ambiente": WOMPI_AMBIENTE,
         "precio": p,
+        "producto": producto,
     }
 
 
@@ -200,7 +230,7 @@ def verificar_cobro(id: str, referencia: str = ""):
 
     # El monto debe ser al menos el precio del día menos un margen por
     # si la TRM cambió entre que se creó el cobro y se pagó.
-    esperado = precio_del_dia()["cop_en_centavos"]
+    esperado = precio_del_dia(producto_de(ref))["cop_en_centavos"]
     if monto < esperado * 0.90:
         raise HTTPException(status_code=400, detail="El monto pagado no corresponde al precio.")
 
@@ -264,16 +294,16 @@ def textos_protegidos():
     return PROTEGER_TEXTOS
 
 
-def hay_permiso(permiso):
-    """True si viene un permiso de pago válido."""
-    return bool(permiso) and permiso_valido(permiso)
+def hay_permiso(permiso, producto="informe"):
+    """True si viene un permiso de pago válido para ese producto."""
+    return bool(permiso) and permiso_valido(permiso, producto)
 
 
-def exigir_permiso(permiso):
+def exigir_permiso(permiso, producto="informe"):
     """Lo llama el backend antes de entregar los textos completos."""
     if not PROTEGER_TEXTOS:
         return True
-    if hay_permiso(permiso):
+    if hay_permiso(permiso, producto):
         return True
     raise HTTPException(status_code=402,
                         detail="Este contenido hace parte del informe completo.")
