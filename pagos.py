@@ -38,13 +38,16 @@ PRODUCTOS = {
 
 
 def producto_de(referencia):
-    """De la referencia se deduce qué se compró. Como la referencia va
-    dentro de la firma del permiso, nadie puede cambiarla por fuera."""
+    """De la referencia se deduce qué se compró o qué se regaló. Como la
+    referencia va dentro de la firma del permiso, nadie puede cambiarla."""
     r = str(referencia or "").upper()
+    if r.startswith("CORTESIA-MAPA-"):
+        return "mapa"
+    if r.startswith("CORTESIA-INFORME-"):
+        return "informe"
     if r.startswith("CORTESIA-"):
-        return "todo"          # tus códigos abren las dos cosas
+        return "todo"
     return "mapa" if r.startswith("RPM-") else "informe"
-
 WOMPI_PUBLIC_KEY = os.environ.get("WOMPI_PUBLIC_KEY", "")
 WOMPI_INTEGRITY_SECRET = os.environ.get("WOMPI_INTEGRITY_SECRET", "")
 WOMPI_EVENTS_SECRET = os.environ.get("WOMPI_EVENTS_SECRET", "")
@@ -530,13 +533,15 @@ def cortesia(datos: DatosCortesia):
     registro de quién lo usó: el control es que los códigos se cambian
     o se borran en Render cuando ya cumplieron su encargo."""
     codigo = (datos.codigo or "").strip().upper()
-    if not codigo or codigo not in _leer_codigos():
+    producto = producto_del_codigo(codigo)
+    if not producto:
         raise HTTPException(status_code=404, detail="Ese código no sirve.")
-    print(f"Cortesía: se usó el código {codigo}")
+    print(f"Cortesía: se usó el código {codigo} ({producto})")
     return {
         "ok": True,
-        "permiso": crear_permiso(f"cortesia-{codigo}"),
+        "permiso": crear_permiso(referencia_de_cortesia(codigo, producto)),
         "horas": HORAS_DE_PERMISO,
+        "producto": producto,
     }
 
 
@@ -847,3 +852,77 @@ def estado_mapa():
     except Exception as e:
         detalle["precio"] = {"error": repr(e)}
     return detalle
+
+
+# ══════════════════════════════════════════════════════════════════
+#  CÓDIGOS DE CORTESÍA POR PRODUCTO, Y REGALAR UN ASTROMAPA
+# ══════════════════════════════════════════════════════════════════
+#
+# Antes había una sola clase de código y abría todo. Ahora hay tres, y
+# el producto va DENTRO del código, no en la casilla donde se escriba:
+#
+#   CODIGOS_CORTESIA           abren las dos cosas  (los que ya tienes)
+#   CODIGOS_CORTESIA_MAPA      abren sólo el astromapa
+#   CODIGOS_CORTESIA_INFORME   abren sólo el informe de la carta natal
+#
+# Que el producto vaya en el código y no en la casilla tiene una razón:
+# si alguien escribe un código del astromapa en la casilla del informe,
+# lo justo es abrirle el astromapa y decírselo, no responderle «ese
+# código no sirve» y dejarlo perdido sin saber por qué.
+#
+# Tus códigos de siempre siguen funcionando igual, sin tocar nada.
+
+
+def _codigos_de(variable):
+    crudo = os.environ.get(variable, "")
+    return {c.strip().upper() for c in crudo.split(",") if c.strip()}
+
+
+def producto_del_codigo(codigo):
+    """Qué abre un código: 'todo', 'mapa' o 'informe'. None si no existe."""
+    c = (codigo or "").strip().upper()
+    if not c:
+        return None
+    if c in _codigos_de("CODIGOS_CORTESIA"):
+        return "todo"
+    if c in _codigos_de("CODIGOS_CORTESIA_MAPA"):
+        return "mapa"
+    if c in _codigos_de("CODIGOS_CORTESIA_INFORME"):
+        return "informe"
+    return None
+
+
+def referencia_de_cortesia(codigo, producto):
+    """La referencia que lleva el permiso. De acá saca producto_de() qué
+    abre, y como la referencia va dentro de la firma, no se puede falsear."""
+    if producto == "mapa":
+        return "CORTESIA-MAPA-" + codigo
+    if producto == "informe":
+        return "CORTESIA-INFORME-" + codigo
+    return "CORTESIA-" + codigo
+
+
+class DatosEnvioMapa(BaseModel):
+    permiso: str
+    correo: str
+    lang: str = "es"
+    nacimiento: dict
+
+
+@router.post("/mapa/enviar")
+def enviar_mapa_a_un_correo(datos: DatosEnvioMapa):
+    """Manda el astromapa al correo que se indique. Es el gemelo de
+    /cobro/enviar: sirve para regalar un astromapa ya hecho."""
+    if not permiso_valido(datos.permiso, "mapa"):
+        raise HTTPException(status_code=402,
+                            detail="El astromapa hace parte de la versión de pago.")
+    correo_limpio = (datos.correo or "").strip()
+    if "@" not in correo_limpio or "." not in correo_limpio.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Ese correo no parece válido.")
+
+    import correo as correo_mod
+    lang = "en" if str(datos.lang).lower().startswith("en") else "es"
+    pdf = _armar_mapa(datos.nacimiento, lang)
+    enviado, motivo = correo_mod.enviar_mapa(
+        correo_limpio, pdf, (datos.nacimiento.get("name") or ""), lang)
+    return {"ok": True, "enviado": enviado, "motivo": "" if enviado else motivo}
