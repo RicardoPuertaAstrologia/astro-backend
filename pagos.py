@@ -516,7 +516,7 @@ def descargar_pdf(datos: DatosPDF):
     return Response(
         content=bytes(pdf),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{base}{seguro}.pdf"'},
+        headers=cabecera_de_archivo(f"{base}{seguro}.pdf"),
     )
 
 
@@ -604,7 +604,7 @@ def informe_gratis(datos: DatosGratis):
     return Response(
         content=bytes(pdf),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{base}{seguro}.pdf"'},
+        headers=cabecera_de_archivo(f"{base}{seguro}.pdf"),
     )
 
 
