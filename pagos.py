@@ -654,3 +654,196 @@ def estado_cobro():
         "trm_disponible": trm_ok,
         "precio": p,
     }
+
+
+# ══════════════════════════════════════════════════════════════════
+#  EL ASTROMAPA
+# ══════════════════════════════════════════════════════════════════
+#
+# El segundo producto. Funciona igual que el informe de la carta natal:
+# se verifica el pago contra Wompi, el servidor arma el PDF, lo manda al
+# correo y entrega un permiso de lectura de seis horas.
+#
+# Dos cosas que conviene tener claras:
+#
+#  1. El día juliano se pide a get_julian_day_ut(), que es LA MISMA
+#     función que usa la carta natal. Así el mapa y el informe hablan
+#     exactamente del mismo instante, con la misma zona horaria y el
+#     mismo manejo del horario de verano. Si el mapa calculara la hora
+#     por su cuenta, los dos informes podrían desfasarse.
+#
+#  2. El permiso que se entrega va firmado sobre una referencia que
+#     empieza por RPM-, y producto_de() deduce de ahí que es del mapa.
+#     Con ese permiso NO se pueden abrir los textos del informe de la
+#     carta natal, que vale más.
+
+class DatosMapaEntrega(BaseModel):
+    id: str
+    referencia: str = ""
+    correo: str
+    lang: str = "es"
+    nacimiento: dict
+
+
+class DatosMapaPDF(BaseModel):
+    permiso: str
+    lang: str = "es"
+    nacimiento: dict
+
+
+_MAPAS = {}             # huella -> (momento, bytes)
+_MAPAS_VIDA = 900       # 15 minutos, como el informe
+_MAPAS_CUANTOS = 4
+
+
+def _armar_mapa(nacimiento_dict, lang):
+    """Arma el PDF del astromapa. Lo usan el correo y la descarga, para que
+    la persona reciba exactamente el mismo documento por los dos lados.
+    Si ya se armó ese mismo mapa hace poco, se devuelve tal cual."""
+    crudo = json.dumps(["mapa", nacimiento_dict, lang], sort_keys=True, default=str)
+    huella = hashlib.sha256(crudo.encode("utf-8", "ignore")).hexdigest()
+
+    ahora = time.time()
+    for k in [k for k, (t, _) in _MAPAS.items() if ahora - t > _MAPAS_VIDA]:
+        _MAPAS.pop(k, None)
+    guardado = _MAPAS.get(huella)
+    if guardado:
+        print("Astromapa: se reusa el que se armó hace un momento")
+        return guardado[1]
+
+    from backend import BirthData, get_julian_day_ut
+    import mapa_informe
+
+    try:
+        nacimiento = BirthData(**nacimiento_dict)
+        jd, zona = get_julian_day_ut(nacimiento)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400,
+                            detail=f"No se pudo leer la fecha de nacimiento: {e}")
+
+    try:
+        pdf = mapa_informe.construir_pdf(nacimiento_dict, jd, zona, lang)
+    except Exception as e:
+        print("Astromapa: falló el PDF:", repr(e))
+        raise HTTPException(status_code=500, detail="No se pudo armar el astromapa en PDF.")
+
+    if len(_MAPAS) >= _MAPAS_CUANTOS:
+        _MAPAS.pop(min(_MAPAS, key=lambda k: _MAPAS[k][0]), None)
+    _MAPAS[huella] = (time.time(), pdf)
+    return pdf
+
+
+def cabecera_de_archivo(nombre_archivo):
+    """La cabecera que le dice al navegador cómo llamar al archivo.
+
+    Las cabeceras HTTP sólo admiten ASCII. Un nombre con tilde —«María
+    José Muñoz»— viaja en latin-1 y al navegador le llega mal escrito; y
+    uno con letras que ni siquiera caben en latin-1 —turco, polaco,
+    griego, chino— hace que la descarga falle con un error 500.
+
+    Por eso se mandan las dos formas, que es lo que dice la norma
+    (RFC 6266): `filename` sin tildes, que entiende cualquier programa, y
+    `filename*` en UTF-8, que es el que usan todos los navegadores de hoy
+    y el que sale bien escrito.
+    """
+    import unicodedata
+    import urllib.parse
+    plano = unicodedata.normalize("NFKD", nombre_archivo)
+    plano = plano.encode("ascii", "ignore").decode("ascii")
+    plano = "".join(c for c in plano if c.isalnum() or c in " -_.").strip()
+    # Si el nombre de la persona se fue entero —por ejemplo un nombre en
+    # chino, que no tiene equivalente sin tildes— queda «Astromapa - .pdf».
+    # Se le quita ese guion suelto. El nombre de verdad va igual, bien
+    # escrito, en el filename* de más abajo.
+    plano = plano.replace(" - .pdf", ".pdf").strip(" -")
+    if not plano or plano.lower().startswith(".pdf"):
+        plano = "informe.pdf"
+    citado = urllib.parse.quote(nombre_archivo, safe="")
+    return {"Content-Disposition":
+            "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (plano, citado)}
+
+
+def _nombre_archivo_mapa(nombre, lang):
+    limpio = "".join(c for c in (nombre or "") if c.isalnum() or c in " -_").strip()
+    base = "Astromap - " if lang == "en" else "Astromapa - "
+    return base + (limpio or ("map" if lang == "en" else "mapa")) + ".pdf"
+
+
+@router.post("/mapa/entregar")
+def entregar_mapa(datos: DatosMapaEntrega):
+    """Verifica el pago del mapa, arma el PDF y lo manda al correo."""
+    transaccion = consultar_transaccion(datos.id)
+    if transaccion.get("status") != "APPROVED":
+        raise HTTPException(status_code=402, detail="Ese pago no está aprobado.")
+    if datos.referencia and transaccion.get("reference") and \
+            datos.referencia != transaccion.get("reference"):
+        raise HTTPException(status_code=400, detail="La referencia no corresponde a ese pago.")
+
+    ref = transaccion.get("reference") or datos.referencia
+    if producto_de(ref) == "informe":
+        raise HTTPException(status_code=400,
+                            detail="Ese pago es del informe de la carta natal, no del astromapa.")
+
+    lang = "en" if str(datos.lang).lower().startswith("en") else "es"
+    import correo as correo_mod
+    pdf = _armar_mapa(datos.nacimiento, lang)
+
+    enviado, motivo = correo_mod.enviar_mapa(
+        datos.correo, pdf, (datos.nacimiento.get("name") or ""), lang)
+
+    return {
+        "ok": True,
+        "correo_enviado": enviado,
+        "motivo": "" if enviado else motivo,
+        "permiso": crear_permiso(ref),
+        "horas": HORAS_DE_PERMISO,
+        "tamano_pdf": len(pdf),
+    }
+
+
+@router.post("/mapa/pdf")
+def descargar_mapa(datos: DatosMapaPDF):
+    """Devuelve el MISMO astromapa que se manda por correo."""
+    if not permiso_valido(datos.permiso, "mapa"):
+        raise HTTPException(status_code=402, detail="El astromapa hace parte de la versión de pago.")
+
+    lang = "en" if str(datos.lang).lower().startswith("en") else "es"
+    pdf = _armar_mapa(datos.nacimiento, lang)
+    archivo = _nombre_archivo_mapa(datos.nacimiento.get("name"), lang)
+    return Response(
+        content=bytes(pdf),
+        media_type="application/pdf",
+        headers=cabecera_de_archivo(archivo),
+    )
+
+
+@router.get("/mapa/estado")
+def estado_mapa():
+    """Dice si el servidor sabe armar el astromapa. Sirve para comprobar
+    que los archivos del mapa subieron bien, sin tener que pagar nada."""
+    detalle = {}
+    try:
+        import mapa_informe, mapa_datos, mapa_dibujo, mapa_textos
+        detalle["modulos"] = True
+        detalle["ciudades"] = len(mapa_datos._ciudades())
+        detalle["contornos"] = len(mapa_dibujo.mundo())
+        detalle["textos_es"] = len(mapa_textos.largos("es"))
+        detalle["textos_en"] = len(mapa_textos.largos("en"))
+        detalle["listo"] = (detalle["ciudades"] == 73 and
+                            detalle["textos_es"] == 66 and
+                            detalle["textos_en"] == 66 and
+                            detalle["contornos"] > 200)
+    except Exception as e:
+        detalle["modulos"] = False
+        detalle["listo"] = False
+        detalle["error"] = repr(e)
+    # El precio se consulta aparte y sin que pueda tumbar la comprobación:
+    # si datos.gov.co no contesta, lo que interesa saber —si los archivos
+    # del mapa subieron bien— se sigue pudiendo ver.
+    try:
+        detalle["precio"] = precio_del_dia("mapa")
+    except Exception as e:
+        detalle["precio"] = {"error": repr(e)}
+    return detalle
