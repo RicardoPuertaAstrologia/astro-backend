@@ -228,7 +228,7 @@ def _html(t, nombre):
                 f'border-radius:28px;">{t["boton"]}</a>'
                 "</td></tr></table>")
     return f"""<!DOCTYPE html>
-<html lang="{'es' if t is TEXTOS['es'] else 'en'}">
+<html lang="{t.get('lang', 'es' if t is TEXTOS['es'] else 'en')}">>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -346,4 +346,136 @@ def enviar_prueba(destino):
                 s.send_message(mensaje)
         return True, ""
     except Exception as e:
+        return False, str(e)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  EL CORREO DEL ASTROMAPA
+# ══════════════════════════════════════════════════════════════════
+#
+# El mismo diseño del correo del informe —mismo encabezado, mismo botón
+# de cita, mismo pie con el logo—, con su propio asunto, sus propios
+# párrafos y su propio nombre de archivo adjunto.
+
+PARRAFOS_MAPA_ES = [
+    "Antes que nada, gracias por elegir tu **astromapa**: tu carta natal "
+    "llevada al mapa del mundo.",
+
+    "En este PDF encuentras el mapa con las líneas de tus catorce planetas "
+    "sobre la Tierra, los ocho segmentos de vida con el texto completo de "
+    "cada uno, tus treinta y seis líneas, tus cruces, y la lista de ciudades "
+    "con lo que tienes activo en cada una.",
+
+    "Léelo con calma y sin orden: puedes entrar por el segmento que te llame "
+    "o directamente por tu ciudad. Y ten presente una cosa: estas líneas no "
+    "son sólo para mudarse. También son **energías de las que te puedes "
+    "nutrir** vivas donde vivas, conociendo gente de esas zonas o teniendo "
+    "contacto con esos países y esas culturas.",
+
+    "El mapa te dice **dónde**. Lo que no puede decirte, porque depende de tu "
+    "carta entera, es **cómo está parado cada planeta** para cumplir lo que su "
+    "línea promete. Y si estás pensando en mudarte a alguna de estas zonas, en "
+    "una cita lo vemos junto con una carta de **Relocación**. Puedes programar "
+    "tu cita aquí:",
+
+    "Espero que te sirva para orientarte. Recuerda que **la hora exacta de "
+    "nacimiento es la clave** para la precisión de este mapa: las líneas se "
+    "mueven cerca de un grado por cada cuatro minutos de reloj.",
+]
+
+PARRAFOS_MAPA_EN = [
+    "First of all, thank you for choosing your **astromap**: your natal chart "
+    "carried across to the map of the world.",
+
+    "In this PDF you will find the map with the lines of your fourteen planets "
+    "across the Earth, the eight life segments with the full text of each one, "
+    "your thirty-six lines, your crossings, and the list of cities with what "
+    "you have active in each.",
+
+    "Read it slowly, and in no particular order: you can start with whichever "
+    "segment calls you, or go straight to your own city. And keep one thing in "
+    "mind: these lines are not only about moving. They are also **energies you "
+    "can draw on** wherever you live, by meeting people from those regions or "
+    "keeping contact with those countries and cultures.",
+
+    "The map tells you **where**. What it cannot tell you, because it depends "
+    "on your whole chart, is **how well placed each planet is** to deliver what "
+    "its line promises. And if you are thinking of moving to one of these "
+    "regions, in a consultation we look at it together with a **Relocation "
+    "Chart**. You can book a time here:",
+
+    "I hope it helps you find your bearings. Remember that **the exact time of "
+    "birth is the key** to the accuracy of this map: the lines shift about one "
+    "degree for every four minutes of clock time.",
+]
+
+TEXTOS_MAPA = {
+    "es": {
+        "lang": "es",
+        "asunto": "Tu astromapa · Ricardo Puerta Isaza",
+        "saludo": "Hola{nombre},",
+        "parrafos": PARRAFOS_MAPA_ES,
+        "boton": "Agendar una cita",
+        "despedida": "Con mucho aprecio,",
+        "alt": "Ricardo Puerta Isaza · arquitecto & astrólogo",
+        "adjunto": "Tu astromapa va adjunto a este correo, en PDF.",
+    },
+    "en": {
+        "lang": "en",
+        "asunto": "Your astromap · Ricardo Puerta Isaza",
+        "saludo": "Hello{nombre},",
+        "parrafos": PARRAFOS_MAPA_EN,
+        "boton": "Book a consultation",
+        "despedida": "With much appreciation,",
+        "alt": "Ricardo Puerta Isaza · architect & astrologer",
+        "adjunto": "Your astromap is attached to this email, as a PDF.",
+    },
+}
+
+
+def enviar_mapa(destino, pdf_bytes, nombre="", lang="es"):
+    """Envía el astromapa en PDF. Devuelve (True, '') o (False, motivo)."""
+    if not correo_configurado():
+        return False, "El envío de correo no está configurado en el servidor."
+
+    es = (lang != "en")
+    t = TEXTOS_MAPA["es" if es else "en"]
+    saludo = f" {nombre.split()[0]}" if nombre else ""
+    limpio = "".join(c for c in (nombre or "") if c.isalnum() or c in " -_").strip()
+    archivo_pdf = (("Astromapa - " if es else "Astromap - ")
+                   + (limpio or ("mapa" if es else "map"))) + ".pdf"
+
+    plano = _texto_plano(t, saludo)
+    conservado = _html(t, saludo)
+
+    if BREVO_API_KEY:
+        return _enviar_por_api(destino, t["asunto"], plano,
+                               pdf_bytes, archivo_pdf, html=conservado)
+
+    mensaje = EmailMessage()
+    mensaje["Subject"] = t["asunto"]
+    mensaje["From"] = REMITENTE
+    mensaje["To"] = destino
+    if COPIA_OCULTA:
+        mensaje["Bcc"] = COPIA_OCULTA
+    mensaje.set_content(plano)
+    mensaje.add_alternative(conservado, subtype="html")
+    mensaje.add_attachment(pdf_bytes, maintype="application", subtype="pdf",
+                           filename=archivo_pdf)
+
+    try:
+        contexto = ssl.create_default_context()
+        if PUERTO == 465:
+            with smtplib.SMTP_SSL(SERVIDOR, PUERTO, context=contexto, timeout=30) as s:
+                s.login(USUARIO, CLAVE)
+                s.send_message(mensaje)
+        else:
+            with smtplib.SMTP(SERVIDOR, PUERTO, timeout=30) as s:
+                s.ehlo()
+                s.starttls(context=contexto)
+                s.login(USUARIO, CLAVE)
+                s.send_message(mensaje)
+        return True, ""
+    except Exception as e:
+        print("Correo: no se pudo enviar el astromapa:", repr(e))
         return False, str(e)
