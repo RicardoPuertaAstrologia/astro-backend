@@ -1032,7 +1032,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
         for etiqueta, clave in (("Qué pasa" if es else "What happens", "pasa"),
                                 ("El spoiler ácido" if es else "The blunt truth", "spoiler"),
                                 ("Los retos" if es else "The challenges", "retos"),
-                                ("Qué entender y trabajar" if es else "What to work on", "trabajar")):
+                                ("Qué entender y trabajar" if es else "What to understand and work on", "trabajar")):
             valor = edad_texto.get(clave)
             if not valor:
                 continue
