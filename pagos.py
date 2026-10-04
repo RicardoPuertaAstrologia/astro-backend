@@ -926,3 +926,145 @@ def enviar_mapa_a_un_correo(datos: DatosEnvioMapa):
     enviado, motivo = correo_mod.enviar_mapa(
         correo_limpio, pdf, (datos.nacimiento.get("name") or ""), lang)
     return {"ok": True, "enviado": enviado, "motivo": "" if enviado else motivo}
+
+
+
+# ══════════════════════════════════════════════════════════════════
+#  LA PUERTA DEL FORMULARIO DE CONSULTA
+# ══════════════════════════════════════════════════════════════════
+#
+# Hasta ahora el formulario de consulta.html terminaba en un enlace de
+# WhatsApp: si la persona llenaba todo y no le daba a «enviar» allá, la
+# solicitud se perdía sin que nadie se enterara. Ahora el formulario le
+# habla a esta puerta y la solicitud llega al correo de inmediato.
+#
+# Es una puerta pública que manda correos, así que lleva tres defensas:
+#
+#   1. una casilla trampa, invisible en la página. Una persona nunca la
+#      ve ni la llena; un robot que rellena todo lo que encuentra, sí.
+#      Si viene llena, se responde que todo bien y no se manda nada.
+#   2. un tope por dirección de internet: cinco solicitudes por hora y
+#      quince al día. Pasado el tope se responde 429.
+#   3. límites de largo y limpieza de saltos de línea, para que nadie
+#      pueda colar cabeceras falsas dentro del correo.
+
+class DatosSolicitud(BaseModel):
+    nombre: str = ""
+    correo: str = ""
+    pais: str = ""
+    ciudad: str = ""
+    consulta: str = ""
+    modalidad: str = ""
+    lang: str = "es"
+    origen: str = ""
+    web: str = ""          # la casilla trampa: tiene que llegar vacía
+
+
+_SOLICITUDES_POR_IP = {}        # ip -> [momentos]
+_TOPE_HORA = 5
+_TOPE_DIA = 15
+
+
+def _quien_pide(request):
+    """La dirección real de quien pide. Render habla por un intermediario,
+    así que la verdadera viene en X-Forwarded-For."""
+    reenviada = request.headers.get("x-forwarded-for", "")
+    if reenviada:
+        return reenviada.split(",")[0].strip()
+    return getattr(getattr(request, "client", None), "host", "") or "?"
+
+
+def _puede_pedir(ip):
+    ahora = time.time()
+    historia = [t for t in _SOLICITUDES_POR_IP.get(ip, []) if ahora - t < 86400]
+    if len(historia) >= _TOPE_DIA:
+        return False, historia
+    if len([t for t in historia if ahora - t < 3600]) >= _TOPE_HORA:
+        return False, historia
+    return True, historia
+
+
+def _limpio(texto, tope=160):
+    """Sin saltos de línea y sin pasarse de largo. Los saltos de línea son
+    lo que se usa para colar cabeceras falsas en un correo."""
+    t = str(texto or "").replace("\r", " ").replace("\n", " ").strip()
+    return t[:tope]
+
+
+def _correo_valido(c):
+    if not c or len(c) > 160 or " " in c:
+        return False
+    if c.count("@") != 1:
+        return False
+    usuario, dominio = c.split("@")
+    return bool(usuario) and "." in dominio and not dominio.startswith(".") \
+        and not dominio.endswith(".")
+
+
+@router.post("/consulta/solicitar")
+def solicitar_consulta(datos: DatosSolicitud, request: Request):
+    """Recibe el formulario de la página de consulta, se lo manda a Ricardo
+    al correo y le devuelve un acuse a la persona."""
+    # 1 · la trampa
+    if (datos.web or "").strip():
+        print("Consulta: robot descartado")
+        return {"ok": True, "enviado": True}
+
+    # 2 · el tope por dirección
+    ip = _quien_pide(request)
+    permitido, historia = _puede_pedir(ip)
+    if not permitido:
+        raise HTTPException(status_code=429,
+                            detail="Has enviado varias solicitudes seguidas. "
+                                   "Espera un rato o escríbeme por WhatsApp.")
+
+    # 3 · los datos, limpios
+    nombre = _limpio(datos.nombre, 120)
+    correo = _limpio(datos.correo, 160).lower()
+    pais = _limpio(datos.pais, 80)
+    ciudad = _limpio(datos.ciudad, 80)
+    if not nombre or not pais or not ciudad:
+        raise HTTPException(status_code=400, detail="Faltan datos de la solicitud.")
+    if not _correo_valido(correo):
+        raise HTTPException(status_code=400, detail="Ese correo no parece válido.")
+
+    limpios = {
+        "nombre": nombre,
+        "correo": correo,
+        "pais": pais,
+        "ciudad": ciudad,
+        "consulta": _limpio(datos.consulta, 40),
+        "modalidad": _limpio(datos.modalidad, 40),
+        "lang": "en" if str(datos.lang).lower().startswith("en") else "es",
+        "origen": _limpio(datos.origen, 120),
+    }
+
+    import correo as correo_mod
+    enviado, motivo = correo_mod.enviar_solicitud(limpios)
+    if not enviado:
+        # Si esto falla, la solicitud se pierde: hay que decirlo, para que la
+        # página ofrezca WhatsApp en vez de dar las gracias por nada.
+        print("Consulta: no se pudo avisar a Ricardo:", motivo)
+        raise HTTPException(status_code=502,
+                            detail="No se pudo enviar la solicitud.")
+
+    historia.append(time.time())
+    _SOLICITUDES_POR_IP[ip] = historia
+    print("Consulta: solicitud de %s (%s) · %s" % (nombre, correo, limpios["consulta"]))
+
+    # El acuse es un extra: si falla, la solicitud ya está a salvo.
+    acuse, _ = correo_mod.enviar_acuse(correo, nombre, limpios["lang"])
+    return {"ok": True, "enviado": True, "acuse": acuse}
+
+
+@router.get("/consulta/estado")
+def estado_consulta():
+    """Para comprobar que la puerta quedó bien puesta, sin mandar nada."""
+    import correo as correo_mod
+    return {
+        "correo_configurado": correo_mod.correo_configurado(),
+        "llegan_a": bool(getattr(correo_mod, "SOLICITUDES_A", "")),
+        "tope_por_hora": _TOPE_HORA,
+        "tope_por_dia": _TOPE_DIA,
+        "direcciones_vistas": len(_SOLICITUDES_POR_IP),
+    }
