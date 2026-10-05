@@ -146,7 +146,7 @@ PARRAFOS_EN = [
     "since you were born you have had the possibility of better understanding "
     "the tools you came into this life with - to make the most of what comes "
     "easily to you and to work consciously on what does not. To know your "
-    "**map of navigation** is to **know yourself**.",
+    "**navigation chart** is to **know yourself**.",
 
     "If, beyond this report, you would like to have an **in-person or online "
     "consultation** with me, to review, clarify and see much more of your map "
