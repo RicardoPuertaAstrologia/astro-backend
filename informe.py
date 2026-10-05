@@ -514,7 +514,21 @@ def ordenar_interpretaciones(interpretaciones, es=True):
     items.sort(key=lambda x: (x[0], x[1], x[2]))
     return [x[3] for x in items]
 
-
+def _coords(bd, es):
+    """Las coordenadas que se usaron, como las escribe un atlas."""
+    def _gm(v, pos, neg, ancho):
+        a = abs(v)
+        g = int(a)
+        m = int(round((a - g) * 60))
+        if m == 60:
+            m = 0
+            g += 1
+        return "%0*d°%s%02d'" % (ancho, g, pos if v >= 0 else neg, m)
+    la, lo = bd.get("latitude"), bd.get("longitude")
+    if la is None or lo is None:
+        return ""
+    return " · " + _gm(la, "N", "S", 2) + " " + _gm(lo, "E", "O" if es else "W", 3)
+    
 def _fecha_larga(bd, lang):
     try:
         fecha = str(bd.get("datetime", ""))[:16]
@@ -803,7 +817,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
                    new_x="LMARGIN", new_y="NEXT")
     pdf.set_font(pdf.sans, "", 9)
     pdf.set_text_color(*SUAVE)
-    pdf.multi_cell(0, 5, _limpiar(f"{bd.get('city', '')} · {bd.get('timezone', '')}"),
+    pdf.multi_cell(0, 5, _limpiar(f"{bd.get('city', '')} · {bd.get('timezone', '')}{_coords(bd, es)}")
                    align="C", new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_y(pdf.h - 13)
@@ -854,7 +868,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
             pdf.set_text_color(*SUAVE)
             pdf.multi_cell(0, 4.8, _limpiar(_fecha_larga(bd, lang)), align="C",
                            new_x="LMARGIN", new_y="NEXT")
-            pdf.multi_cell(0, 4.8, _limpiar(f"{bd.get('city', '')} · {bd.get('timezone', '')}"),
+            pdf.multi_cell(0, 4.8, _limpiar(f"{bd.get('city', '')} · {bd.get('timezone', '')}{_coords(bd, es)}")
                            align="C", new_x="LMARGIN", new_y="NEXT")
             pdf.ln(3)
             pdf.set_font(pdf.sans, "B", 7)
