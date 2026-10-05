@@ -746,7 +746,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
     pdf.set_text_color(*TINTA)
     pdf.multi_cell(0, 12, _limpiar(
         "El mapa de navegación con el que naciste" if es
-        else "The map of navigation you were born with"),
+        else "The Navigation Chart You Were Born With"),
         align="C", new_x="LMARGIN", new_y="NEXT")
 
     # El texto de la portada del sitio, el que explica de qué se trata.
@@ -762,8 +762,8 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
         "es tu mapa de navegación en esta vida. Entiéndela y podrás navegar "
         "con más seguridad y confianza."
         if es else
-        "Your natal chart is the photograph of the sky at the moment you are "
-        "born: it is your map of navigation in this life. Understand it and "
+        "Your natal chart is a photograph of the sky at the moment you were "
+        "born: it is your navigation chart for this life. Understand it and "
         "you will navigate with more certainty and confidence."),
         align="C", new_x="LMARGIN", new_y="NEXT")
 
