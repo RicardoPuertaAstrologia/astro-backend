@@ -1,0 +1,35 @@
+name: Verificar sintaxis de Python
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Instalar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verificar sintaxis de todos los archivos .py
+        run: |
+          echo "Revisando sintaxis de archivos Python..."
+          error=0
+          for archivo in $(find . -name "*.py" -not -path "./.venv/*" -not -path "./venv/*"); do
+            if ! python -m py_compile "$archivo" 2>&1; then
+              echo "ERROR de sintaxis en: $archivo"
+              error=1
+            fi
+          done
+          if [ $error -eq 1 ]; then
+            echo "La verificacion encontro errores. El despliegue NO deberia continuar."
+            exit 1
+          fi
+          echo "Todos los archivos Python tienen sintaxis valida."
