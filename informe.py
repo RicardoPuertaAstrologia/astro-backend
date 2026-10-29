@@ -817,7 +817,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
                    new_x="LMARGIN", new_y="NEXT")
     pdf.set_font(pdf.sans, "", 9)
     pdf.set_text_color(*SUAVE)
-    pdf.multi_cell(0, 5, _limpiar(f"{bd.get('city', '')} · {bd.get('timezone', '')}{_coords(bd, es)}")
+    pdf.multi_cell(0, 5, _limpiar(f"{bd.get('city', '')} · {bd.get('timezone', '')}{_coords(bd, es)}"),
                    align="C", new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_y(pdf.h - 13)
@@ -868,7 +868,7 @@ def _armar(carta, interpretaciones, edad_texto=None, secciones=None,
             pdf.set_text_color(*SUAVE)
             pdf.multi_cell(0, 4.8, _limpiar(_fecha_larga(bd, lang)), align="C",
                            new_x="LMARGIN", new_y="NEXT")
-            pdf.multi_cell(0, 4.8, _limpiar(f"{bd.get('city', '')} · {bd.get('timezone', '')}{_coords(bd, es)}")
+            pdf.multi_cell(0, 4.8, _limpiar(f"{bd.get('city', '')} · {bd.get('timezone', '')}{_coords(bd, es)}"),
                            align="C", new_x="LMARGIN", new_y="NEXT")
             pdf.ln(3)
             pdf.set_font(pdf.sans, "B", 7)
