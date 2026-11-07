@@ -69,7 +69,8 @@ WOMPI_API = os.environ.get("WOMPI_API_URL") or (
 TRM_URL = ("https://www.datos.gov.co/resource/32sa-8pi3.json"
            "?$limit=1&$order=vigenciadesde%20DESC")
 
-HORAS_DE_PERMISO = 6  # cuánto dura el permiso de lectura tras pagar
+HORAS_DE_PERMISO = 3  # cuánto dura el permiso de lectura tras pagar
+MINUTOS_PERMISO_ABIERTO = 30  # vida del permiso de cortesía antes de amarrarse a unos datos
 
 # Códigos de cortesía: para que Ricardo entre sin pagar y para regalar
 # accesos. Se escriben en Render, separados por comas:
@@ -81,6 +82,80 @@ def _leer_codigos():
 
 
 CODIGOS_CORTESIA = _leer_codigos()
+
+
+# ------------------------------------------------------------
+# AMARRE DE UN PAGO A UNA CARTA
+# ------------------------------------------------------------
+# Un pago, o un código de cortesía, sirve para UNA sola carta natal: la
+# de los datos de nacimiento que la persona introduce la primera vez
+# que descarga el informe. Aquí se anota cuál fue esa carta, para
+# rechazar después cualquier intento de descargar otra carta distinta
+# con el mismo pago.
+#
+# El registro vive en la memoria del servidor y se pierde al reiniciar.
+# Es aceptable porque cada permiso dura 3 horas y los reinicios del
+# plan gratuito de Render ocurren por inactividad —justo cuando no hay
+# nadie usando el permiso—. Cuando construyamos el sistema de códigos
+# de regalo (Fase 2) y agreguemos una base de datos de verdad, este
+# registro migrará allá.
+_PERMISOS_AMARRADOS = {}                       # referencia -> (momento, huella)
+_AMARRES_VIDA = HORAS_DE_PERMISO * 3600 * 2    # doble del permiso, con margen
+
+
+def _huella_nacimiento(nacimiento):
+    """Huella de 16 caracteres hex que identifica los datos esenciales
+    de nacimiento: año, mes, día, hora, minuto, latitud y longitud. No
+    incluye el nombre ni la ciudad escrita; dos personas con las mismas
+    coordenadas y hora exacta producen la misma huella, lo cual es
+    correcto porque astrológicamente son la misma carta."""
+    if not nacimiento:
+        return ""
+    datos = {
+        "year": nacimiento.get("year"),
+        "month": nacimiento.get("month"),
+        "day": nacimiento.get("day"),
+        "hour": nacimiento.get("hour"),
+        "minute": nacimiento.get("minute"),
+        "latitude": nacimiento.get("latitude"),
+        "longitude": nacimiento.get("longitude"),
+    }
+    crudo = json.dumps(datos, sort_keys=True, default=str)
+    return hashlib.sha256(crudo.encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+def _limpiar_amarres():
+    """Borra del registro los amarres caducados. Se llama antes de cada
+    verificación para que la memoria no crezca sin tope."""
+    ahora = time.time()
+    vencidos = [ref for ref, (t, _) in _PERMISOS_AMARRADOS.items()
+                if ahora - t > _AMARRES_VIDA]
+    for ref in vencidos:
+        _PERMISOS_AMARRADOS.pop(ref, None)
+
+
+def _amarrar_o_verificar(referencia, nacimiento):
+    """Si esta referencia nunca se usó, la amarra a estos datos de
+    nacimiento. Si ya se usó antes, comprueba que los datos sean los
+    mismos. Devuelve True si está bien, False si se intentó cambiar la
+    carta a la que corresponde el pago."""
+    _limpiar_amarres()
+    huella = _huella_nacimiento(nacimiento)
+    guardado = _PERMISOS_AMARRADOS.get(referencia)
+    if guardado:
+        _, huella_guardada = guardado
+        return huella_guardada == huella
+    _PERMISOS_AMARRADOS[referencia] = (time.time(), huella)
+    return True
+
+
+def _referencia_del_permiso(permiso):
+    """Saca la referencia del permiso sin verificar la firma. Se usa
+    después de haber validado el permiso con permiso_valido()."""
+    try:
+        return str(permiso).split(".")[0]
+    except Exception:
+        return ""
 
 
 # ------------------------------------------------------------
@@ -380,13 +455,24 @@ class DatosEntrega(BaseModel):
 
 @router.post("/cobro/entregar")
 def entregar_informe(datos: DatosEntrega):
-    """Verifica el pago, arma el PDF y lo manda al correo de la persona."""
+    """Verifica el pago, arma el PDF y lo manda al correo de la persona.
+    El primer envío amarra la referencia del pago a estos datos de
+    nacimiento: a partir de ahí, ese pago sólo sirve para esta carta."""
     transaccion = consultar_transaccion(datos.id)
     if transaccion.get("status") != "APPROVED":
         raise HTTPException(status_code=402, detail="Ese pago no está aprobado.")
     if datos.referencia and transaccion.get("reference") and \
             datos.referencia != transaccion.get("reference"):
         raise HTTPException(status_code=400, detail="La referencia no corresponde a ese pago.")
+
+    # Un pago sirve para una sola carta. Si esta referencia ya se usó
+    # con otros datos de nacimiento, se rechaza el intento.
+    ref = transaccion.get("reference") or datos.referencia
+    if not _amarrar_o_verificar(ref, datos.nacimiento):
+        raise HTTPException(
+            status_code=400,
+            detail="Este pago ya se usó para la carta de otra persona. "
+                   "Un pago sirve para una sola carta natal.")
 
     lang = "en" if str(datos.lang).lower().startswith("en") else "es"
 
@@ -401,7 +487,7 @@ def entregar_informe(datos: DatosEntrega):
         "ok": True,
         "correo_enviado": enviado,
         "motivo": "" if enviado else motivo,
-        "permiso": crear_permiso(transaccion.get("reference") or datos.referencia),
+        "permiso": crear_permiso(ref),
         "horas": HORAS_DE_PERMISO,
         "tamano_pdf": len(pdf),
     }
@@ -507,9 +593,19 @@ def _armar_pdf(nacimiento_dict, lang, imagen, secciones):
 @router.post("/cobro/pdf")
 def descargar_pdf(datos: DatosPDF):
     """Devuelve el MISMO informe que se manda por correo, para que el botón
-    de descarga no dependa de lo que el navegador tenga abierto en pantalla."""
+    de descarga no dependa de lo que el navegador tenga abierto en pantalla.
+    Verifica que los datos de nacimiento coincidan con los que ya estaban
+    amarrados a este pago: si son otros, rechaza la descarga."""
     if not permiso_valido(datos.permiso):
         raise HTTPException(status_code=402, detail="Este informe hace parte de la versión de pago.")
+
+    # Los datos deben ser los mismos con los que se entregó la carta.
+    # Si es la primera descarga (p.ej. desde cortesía), aquí se amarra.
+    ref = _referencia_del_permiso(datos.permiso)
+    if ref and not _amarrar_o_verificar(ref, datos.nacimiento):
+        raise HTTPException(
+            status_code=400,
+            detail="Este permiso corresponde a otra carta natal.")
 
     lang = "en" if str(datos.lang).lower().startswith("en") else "es"
     pdf = _armar_pdf(datos.nacimiento, lang, datos.imagen, datos.secciones)
@@ -529,9 +625,11 @@ class DatosCortesia(BaseModel):
 
 @router.post("/cortesia")
 def cortesia(datos: DatosCortesia):
-    """Un código de cortesía abre lo mismo que abre un pago. No hay
-    registro de quién lo usó: el control es que los códigos se cambian
-    o se borran en Render cuando ya cumplieron su encargo."""
+    """Un código de cortesía abre lo mismo que abre un pago. Devuelve un
+    permiso corto —treinta minutos— que se amarra a unos datos de
+    nacimiento cuando la persona pide la primera descarga del informe.
+    A partir de ahí, ese código sólo sirve para esa carta durante las
+    horas siguientes."""
     codigo = (datos.codigo or "").strip().upper()
     producto = producto_del_codigo(codigo)
     if not producto:
@@ -539,7 +637,8 @@ def cortesia(datos: DatosCortesia):
     print(f"Cortesía: se usó el código {codigo} ({producto})")
     return {
         "ok": True,
-        "permiso": crear_permiso(referencia_de_cortesia(codigo, producto)),
+        "permiso": crear_permiso(referencia_de_cortesia(codigo, producto),
+                                 minutos=MINUTOS_PERMISO_ABIERTO),
         "horas": HORAS_DE_PERMISO,
         "producto": producto,
     }
@@ -557,12 +656,19 @@ class DatosEnvio(BaseModel):
 @router.post("/cobro/enviar")
 def enviar_a_un_correo(datos: DatosEnvio):
     """Manda el informe completo al correo que se indique. Sirve para
-    regalar una carta ya hecha: Ricardo la calcula y la envía."""
+    regalar una carta ya hecha: Ricardo la calcula y la envía. Los datos
+    de nacimiento deben ser los mismos que se amarraron al pago."""
     if not permiso_valido(datos.permiso):
         raise HTTPException(status_code=402, detail="Este informe hace parte de la versión de pago.")
     correo_limpio = (datos.correo or "").strip()
     if "@" not in correo_limpio or "." not in correo_limpio.split("@")[-1]:
         raise HTTPException(status_code=400, detail="Ese correo no parece válido.")
+
+    ref = _referencia_del_permiso(datos.permiso)
+    if ref and not _amarrar_o_verificar(ref, datos.nacimiento):
+        raise HTTPException(
+            status_code=400,
+            detail="Este permiso corresponde a otra carta natal.")
 
     import correo as correo_mod
     lang = "en" if str(datos.lang).lower().startswith("en") else "es"
@@ -778,7 +884,9 @@ def _nombre_archivo_mapa(nombre, lang):
 
 @router.post("/mapa/entregar")
 def entregar_mapa(datos: DatosMapaEntrega):
-    """Verifica el pago del mapa, arma el PDF y lo manda al correo."""
+    """Verifica el pago del mapa, arma el PDF y lo manda al correo. El
+    primer envío amarra la referencia a estos datos de nacimiento: a
+    partir de ahí, ese pago sólo sirve para este mapa."""
     transaccion = consultar_transaccion(datos.id)
     if transaccion.get("status") != "APPROVED":
         raise HTTPException(status_code=402, detail="Ese pago no está aprobado.")
@@ -790,6 +898,14 @@ def entregar_mapa(datos: DatosMapaEntrega):
     if producto_de(ref) == "informe":
         raise HTTPException(status_code=400,
                             detail="Ese pago es del informe de la carta natal, no del astromapa.")
+
+    # Un pago sirve para un solo astromapa. Si esta referencia ya se
+    # usó con otros datos de nacimiento, se rechaza el intento.
+    if not _amarrar_o_verificar(ref, datos.nacimiento):
+        raise HTTPException(
+            status_code=400,
+            detail="Este pago ya se usó para el astromapa de otra persona. "
+                   "Un pago sirve para un solo astromapa.")
 
     lang = "en" if str(datos.lang).lower().startswith("en") else "es"
     import correo as correo_mod
@@ -810,9 +926,17 @@ def entregar_mapa(datos: DatosMapaEntrega):
 
 @router.post("/mapa/pdf")
 def descargar_mapa(datos: DatosMapaPDF):
-    """Devuelve el MISMO astromapa que se manda por correo."""
+    """Devuelve el MISMO astromapa que se manda por correo. Verifica que
+    los datos de nacimiento coincidan con los que ya estaban amarrados
+    a este pago; si son otros, rechaza la descarga."""
     if not permiso_valido(datos.permiso, "mapa"):
         raise HTTPException(status_code=402, detail="El astromapa hace parte de la versión de pago.")
+
+    ref = _referencia_del_permiso(datos.permiso)
+    if ref and not _amarrar_o_verificar(ref, datos.nacimiento):
+        raise HTTPException(
+            status_code=400,
+            detail="Este permiso corresponde a otro astromapa.")
 
     lang = "en" if str(datos.lang).lower().startswith("en") else "es"
     pdf = _armar_mapa(datos.nacimiento, lang)
@@ -912,13 +1036,20 @@ class DatosEnvioMapa(BaseModel):
 @router.post("/mapa/enviar")
 def enviar_mapa_a_un_correo(datos: DatosEnvioMapa):
     """Manda el astromapa al correo que se indique. Es el gemelo de
-    /cobro/enviar: sirve para regalar un astromapa ya hecho."""
+    /cobro/enviar: sirve para regalar un astromapa ya hecho. Los datos
+    de nacimiento deben ser los mismos que se amarraron al pago."""
     if not permiso_valido(datos.permiso, "mapa"):
         raise HTTPException(status_code=402,
                             detail="El astromapa hace parte de la versión de pago.")
     correo_limpio = (datos.correo or "").strip()
     if "@" not in correo_limpio or "." not in correo_limpio.split("@")[-1]:
         raise HTTPException(status_code=400, detail="Ese correo no parece válido.")
+
+    ref = _referencia_del_permiso(datos.permiso)
+    if ref and not _amarrar_o_verificar(ref, datos.nacimiento):
+        raise HTTPException(
+            status_code=400,
+            detail="Este permiso corresponde a otro astromapa.")
 
     import correo as correo_mod
     lang = "en" if str(datos.lang).lower().startswith("en") else "es"
