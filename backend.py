@@ -1061,9 +1061,18 @@ def interpret_chart(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO,
     """Calcula la carta natal y devuelve todas las interpretaciones aplicables.
     Parámetro opcional ?lang=es|en
     Estos son los textos escritos por Ricardo: hacen parte del informe
-    pagado y no salen del servidor sin un permiso válido."""
+    pagado y no salen del servidor sin un permiso válido. Además, el
+    permiso debe estar amarrado precisamente a estos datos de nacimiento
+    (un pago sirve para una sola carta)."""
     from pagos import exigir_permiso
-    exigir_permiso(x_permiso)
+    # Se pasa el nacimiento como dict para que exigir_permiso compruebe
+    # que el permiso corresponde a esta carta en particular, no a otra.
+    nacimiento_dict = {
+        "year": birth.year, "month": birth.month, "day": birth.day,
+        "hour": birth.hour, "minute": birth.minute,
+        "latitude": birth.latitude, "longitude": birth.longitude,
+    }
+    exigir_permiso(x_permiso, nacimiento=nacimiento_dict)
     lang = normalizar_idioma(lang)
     chart_data = calculate_chart(birth, lang)
     interpretaciones = obtener_interpretaciones_carta(chart_data['natal_chart'], lang)
