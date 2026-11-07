@@ -1024,9 +1024,21 @@ def calculate_endpoint(birth: BirthData, lang: str = IDIOMA_POR_DEFECTO,
 
 
 @app.get("/interpretation/{clave}")
-def get_interpretation(clave: str, lang: str = IDIOMA_POR_DEFECTO):
+def get_interpretation(clave: str, lang: str = IDIOMA_POR_DEFECTO,
+                       x_permiso: str = Header(default="")):
     """Obtener una interpretación por clave (ej: sol_libra, luna_casa_7, aspectos_sol_luna).
-    Parámetro opcional ?lang=es|en"""
+    Parámetro opcional ?lang=es|en
+
+    Este endpoint entrega UN texto por clave. El frontend oficial no lo
+    usa; queda como herramienta de debug para Ricardo. Se protege con
+    exigir_permiso para que no sirva como vía alterna por la que alguien
+    pueda extraer la biblioteca de textos pidiéndolos uno por uno.
+
+    Ojo: aquí no hay datos de nacimiento, así que el amarre a una carta
+    concreta no se puede verificar. Basta con que exista un permiso
+    válido (un código de cortesía sirve)."""
+    from pagos import exigir_permiso
+    exigir_permiso(x_permiso)
     texto, idioma_real = obtener_texto(clave, lang)
     if texto is None:
         raise HTTPException(status_code=404, detail=f"Interpretación no encontrada: {clave}")
