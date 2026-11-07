@@ -377,14 +377,28 @@ def hay_permiso(permiso, producto="informe"):
     return bool(permiso) and permiso_valido(permiso, producto)
 
 
-def exigir_permiso(permiso, producto="informe"):
-    """Lo llama el backend antes de entregar los textos completos."""
+def exigir_permiso(permiso, producto="informe", nacimiento=None):
+    """Lo llama el backend antes de entregar los textos completos.
+
+    Si se pasa `nacimiento` (un dict con year, month, day, hour, minute,
+    latitude, longitude), además verifica que el permiso esté amarrado a
+    esos mismos datos. Si no coincide, rechaza con 400. Esto cierra la
+    brecha por la que un permiso válido servía para pedir las
+    interpretaciones completas de CUALQUIER carta cambiando los datos."""
     if not PROTEGER_TEXTOS:
         return True
-    if hay_permiso(permiso, producto):
-        return True
-    raise HTTPException(status_code=402,
-                        detail="Este contenido hace parte del informe completo.")
+    if not hay_permiso(permiso, producto):
+        raise HTTPException(status_code=402,
+                            detail="Este contenido hace parte del informe completo.")
+    # Verificación de amarre: el permiso debe corresponder a estos datos
+    # de nacimiento concretos, no a otra carta.
+    if nacimiento is not None:
+        ref = _referencia_del_permiso(permiso)
+        if ref and not _amarrar_o_verificar(ref, nacimiento):
+            raise HTTPException(
+                status_code=400,
+                detail="Este permiso corresponde a otra carta natal.")
+    return True
 
 
 # ------------------------------------------------------------
